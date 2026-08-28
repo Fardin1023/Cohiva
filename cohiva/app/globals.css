@@ -1,26 +1,354 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
+
+/* =========================================================
+   COHIVA THEME
+   Palette:
+   Cream      #FFF7EB
+   Beige      #F9F0E0
+   Olive      #A2AB73
+   Berry      #CC3A63
+   ========================================================= */
 
 @theme inline {
+  /* Shadcn */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Sidebar */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Charts */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* =====================================================
+     COHIVA CUSTOM COLORS
+     ===================================================== */
+
+  /* Backgrounds */
+  --color-cream-1: #fff7eb;
+  --color-cream-2: #f9f0e0;
+
+  /* Olive */
+  --color-olive-1: #a2ab73;
+  --color-olive-2: #8f9960;
+  --color-olive-3: #737c4c;
+
+  /* Berry */
+  --color-berry-1: #cc3a63;
+  --color-berry-2: #b83057;
+  --color-berry-3: #9f274a;
+
+  /* Supporting neutrals */
+  --color-dark-1: #3d3732;
+  --color-dark-2: #514940;
+  --color-dark-3: #756e64;
+
+  /* Compatibility with tutorial classes */
+  --color-blue-1: #cc3a63;
+  --color-blue-2: #b83057;
+
+  --color-light-1: #fff7eb;
+  --color-light-2: #f9f0e0;
+  --color-light-3: #756e64;
+
+  --color-green-1: #a2ab73;
+  --color-purple-1: #cc3a63;
+  --color-orange-1: #d99169;
+  --color-yellow-1: #d6bb72;
+
+  /* Radius */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* =========================================================
+   MAIN THEME
+   ========================================================= */
+
+:root {
+  --radius: 0.85rem;
+
+  /* Main page */
+  --background: #f9f0e0;
+  --foreground: #3d3732;
+
+  /* Cards */
+  --card: #fff7eb;
+  --card-foreground: #3d3732;
+
+  /* Popovers */
+  --popover: #fff7eb;
+  --popover-foreground: #3d3732;
+
+  /* Primary - Berry */
+  --primary: #cc3a63;
+  --primary-foreground: #ffffff;
+
+  /* Secondary - Olive */
+  --secondary: #a2ab73;
+  --secondary-foreground: #ffffff;
+
+  /* Muted */
+  --muted: #f1e6d4;
+  --muted-foreground: #756e64;
+
+  /* Accent */
+  --accent: #ece4ce;
+  --accent-foreground: #3d3732;
+
+  /* Destructive */
+  --destructive: #b4233d;
+
+  /* Borders */
+  --border: rgba(81, 73, 64, 0.13);
+  --input: rgba(81, 73, 64, 0.16);
+
+  /* Focus */
+  --ring: #cc3a63;
+
+  /* Charts */
+  --chart-1: #cc3a63;
+  --chart-2: #a2ab73;
+  --chart-3: #d99169;
+  --chart-4: #d6bb72;
+  --chart-5: #8f9960;
+
+  /* Sidebar */
+  --sidebar: #fff7eb;
+  --sidebar-foreground: #3d3732;
+
+  --sidebar-primary: #cc3a63;
+  --sidebar-primary-foreground: #ffffff;
+
+  --sidebar-accent: #f9f0e0;
+  --sidebar-accent-foreground: #3d3732;
+
+  --sidebar-border: rgba(81, 73, 64, 0.1);
+  --sidebar-ring: #cc3a63;
+}
+
+/* =========================================================
+   OPTIONAL DARK MODE
+   Still based on the same Cohiva palette
+   ========================================================= */
+
+.dark {
+  --background: #302c28;
+  --foreground: #fff7eb;
+
+  --card: #3d3732;
+  --card-foreground: #fff7eb;
+
+  --popover: #3d3732;
+  --popover-foreground: #fff7eb;
+
+  --primary: #d94d73;
+  --primary-foreground: #ffffff;
+
+  --secondary: #a2ab73;
+  --secondary-foreground: #ffffff;
+
+  --muted: #514940;
+  --muted-foreground: #d9d0c5;
+
+  --accent: #514940;
+  --accent-foreground: #fff7eb;
+
+  --destructive: #e25b67;
+
+  --border: rgba(255, 247, 235, 0.12);
+  --input: rgba(255, 247, 235, 0.16);
+  --ring: #d94d73;
+
+  --chart-1: #d94d73;
+  --chart-2: #a2ab73;
+  --chart-3: #e2a17a;
+  --chart-4: #dbc478;
+  --chart-5: #bdc58e;
+
+  --sidebar: #38332e;
+  --sidebar-foreground: #fff7eb;
+
+  --sidebar-primary: #d94d73;
+  --sidebar-primary-foreground: #ffffff;
+
+  --sidebar-accent: #514940;
+  --sidebar-accent-foreground: #fff7eb;
+
+  --sidebar-border: rgba(255, 247, 235, 0.1);
+  --sidebar-ring: #d94d73;
+}
+
+/* =========================================================
+   BASE
+   ========================================================= */
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply font-sans;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    min-height: 100vh;
+  }
+
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
   }
 }
 
+/* =========================================================
+   COHIVA GLOBAL APPEARANCE
+   ========================================================= */
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background:
+    radial-gradient(
+      circle at 90% 5%,
+      rgba(204, 58, 99, 0.055),
+      transparent 26%
+    ),
+    radial-gradient(
+      circle at 8% 90%,
+      rgba(162, 171, 115, 0.08),
+      transparent 30%
+    ),
+    #f9f0e0;
+
+  color: #3d3732;
+}
+
+/* Text selection */
+
+::selection {
+  background: rgba(204, 58, 99, 0.22);
+  color: #3d3732;
+}
+
+/* =========================================================
+   SCROLLBAR
+   ========================================================= */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f9f0e0;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #a2ab73;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #8f9960;
+}
+
+/* =========================================================
+   OPTIONAL REUSABLE CLASSES
+   ========================================================= */
+
+@layer utilities {
+  /* Main cream card */
+  .cohiva-card {
+    background: #fff7eb;
+    border: 1px solid rgba(81, 73, 64, 0.1);
+    border-radius: 1rem;
+    box-shadow:
+      0 4px 20px rgba(81, 73, 64, 0.04),
+      0 1px 4px rgba(81, 73, 64, 0.04);
+  }
+
+  /* Berry main button */
+  .cohiva-primary-button {
+    background: #cc3a63;
+    color: #ffffff;
+    border-radius: 0.75rem;
+    transition:
+      background-color 0.2s ease,
+      transform 0.2s ease,
+      box-shadow 0.2s ease;
+  }
+
+  .cohiva-primary-button:hover {
+    background: #b83057;
+    box-shadow: 0 8px 20px rgba(204, 58, 99, 0.18);
+    transform: translateY(-1px);
+  }
+
+  /* Olive secondary button */
+  .cohiva-secondary-button {
+    background: #a2ab73;
+    color: #ffffff;
+    border-radius: 0.75rem;
+    transition:
+      background-color 0.2s ease,
+      transform 0.2s ease;
+  }
+
+  .cohiva-secondary-button:hover {
+    background: #8f9960;
+    transform: translateY(-1px);
+  }
+
+  /* Subtle surface */
+  .cohiva-soft-surface {
+    background: rgba(255, 247, 235, 0.7);
+    border: 1px solid rgba(81, 73, 64, 0.08);
+    backdrop-filter: blur(12px);
+  }
 }
