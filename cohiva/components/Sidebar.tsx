@@ -29,10 +29,11 @@ const Sidebar = () => {
               )}
             >
               <Image
-                src={link.imgUrl}
-                alt={link.label}
-                width={24}
-                height={24}
+              src={link.imgUrl}
+              alt={link.label}
+              width={28}
+              height={28}
+              className="shrink-0 object-contain"
               />
 
               <p className="text-lg font-semibold max-lg:hidden">
