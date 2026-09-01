@@ -1,12 +1,13 @@
-import React from "react";
+import { auth } from "@clerk/nextjs/server";
 
-const Previous = () =>{
-    return (
-        <section className="flex size-full flex-col gap-10 text-brown">
-                <h1 className="text-3xl font-bold">
-                    Previous
-                </h1>
-        </section>
-    )
-}
+const Previous = async () => {
+  await auth.protect();
+
+  return (
+    <div>
+      {/* keep your existing page here */}
+    </div>
+  );
+};
+
 export default Previous;

@@ -1,12 +1,13 @@
-import React from "react";
+import { auth } from "@clerk/nextjs/server";
 
-const Recordings = () =>{
-    return (
-        <section className="flex size-full flex-col gap-10 text-brown">
-                <h1 className="text-3xl font-bold">
-                    Recordings
-                </h1>
-        </section>
-    )
-}
+const Recordings = async () => {
+  await auth.protect();
+
+  return (
+    <div>
+      {/* keep your existing page here */}
+    </div>
+  );
+};
+
 export default Recordings;

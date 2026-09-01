@@ -1,12 +1,13 @@
-import React from "react";
+import { auth } from "@clerk/nextjs/server";
 
-const Upcoming = () =>{
-    return (
-        <section className="flex size-full flex-col gap-10 text-brown">
-                <h1 className="text-3xl font-bold">
-                    Upcoming
-                </h1>
-        </section>
-    )
-}
+const Upcoming = async () => {
+  await auth.protect();
+
+  return (
+    <div>
+      {/* keep your existing page here */}
+    </div>
+  );
+};
+
 export default Upcoming;

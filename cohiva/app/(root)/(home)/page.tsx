@@ -1,13 +1,11 @@
-import React from "react";
+import HomeBanner from "@/components/HomeBanner";
 
-const Home =() =>{
-    return (
-        <section className="flex size-full flex-col gap-10 text-brown">
-                <h1 className="text-3xl font-bold">
-                    Home
-                </h1>
-        </section>
-    )
-}
+const Home = () => {
+  return (
+    <section className="w-full">
+      <HomeBanner />
+    </section>
+  );
+};
 
 export default Home;
