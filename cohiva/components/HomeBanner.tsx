@@ -83,7 +83,7 @@ const HomeBanner = () => {
         fill
         priority
         className="object-cover object-center"
-      />
+      />  
 
       {/* Soft overlay */}
       <div className="absolute inset-0 bg-[#FFF7EB]/10" />

@@ -1,11 +1,7 @@
-import HomeBanner from "@/components/HomeBanner";
+import HomeDashboard from "@/components/HomeDashboard";
 
 const Home = () => {
-  return (
-    <section className="w-full">
-      <HomeBanner />
-    </section>
-  );
+  return <HomeDashboard />;
 };
 
 export default Home;

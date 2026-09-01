@@ -352,3 +352,185 @@ body {
     backdrop-filter: blur(12px);
   }
 }
+/* =========================================================
+   COHIVA HOMEPAGE ANIMATIONS
+   ========================================================= */
+
+@keyframes cohiva-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes cohiva-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes cohiva-icon-bounce {
+  0%,
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+
+  40% {
+    transform: rotate(-6deg) scale(1.08);
+  }
+
+  70% {
+    transform: rotate(4deg) scale(1.04);
+  }
+}
+
+@keyframes cohiva-shine {
+  0% {
+    transform: translateX(-160%) rotate(18deg);
+  }
+
+  100% {
+    transform: translateX(350%) rotate(18deg);
+  }
+}
+
+.cohiva-action-card {
+  opacity: 0;
+
+  animation:
+    cohiva-card-enter 0.65s
+    cubic-bezier(0.22, 1, 0.36, 1)
+    forwards;
+
+  box-shadow:
+    0 12px 28px rgba(61, 55, 50, 0.08);
+
+  transition:
+    transform 0.28s ease,
+    box-shadow 0.28s ease,
+    filter 0.28s ease;
+}
+
+.cohiva-action-card:hover {
+  transform:
+    translateY(-9px)
+    rotate(-1deg)
+    scale(1.015);
+
+  box-shadow:
+    0 22px 44px rgba(61, 55, 50, 0.16);
+
+  filter: saturate(1.06);
+}
+
+.cohiva-action-card:nth-child(even):hover {
+  transform:
+    translateY(-9px)
+    rotate(1deg)
+    scale(1.015);
+}
+
+.cohiva-action-card:hover .cohiva-icon-bounce {
+  animation:
+    cohiva-icon-bounce
+    0.55s
+    ease;
+}
+
+.cohiva-card-delay-1 {
+  animation-delay: 0.05s;
+}
+
+.cohiva-card-delay-2 {
+  animation-delay: 0.15s;
+}
+
+.cohiva-card-delay-3 {
+  animation-delay: 0.25s;
+}
+
+.cohiva-card-delay-4 {
+  animation-delay: 0.35s;
+}
+
+.cohiva-float {
+  animation:
+    cohiva-float
+    4s
+    ease-in-out
+    infinite;
+}
+
+.cohiva-shine {
+  position: absolute;
+  top: -40%;
+  left: -40%;
+
+  width: 26%;
+  height: 180%;
+
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.2),
+      transparent
+    );
+
+  transform: translateX(-160%) rotate(18deg);
+
+  pointer-events: none;
+}
+
+.cohiva-action-card:hover .cohiva-shine {
+  animation:
+    cohiva-shine
+    0.85s
+    ease;
+}
+/* =========================================================
+   COHIVA MODAL ANIMATIONS
+   ========================================================= */
+
+@keyframes cohiva-modal-backdrop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes cohiva-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(25px) scale(0.92) rotate(-1deg);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(0deg);
+  }
+}
+
+.cohiva-modal-backdrop {
+  animation: cohiva-modal-backdrop-in 0.22s ease-out;
+}
+
+.cohiva-modal {
+  animation:
+    cohiva-modal-in
+    0.38s
+    cubic-bezier(0.22, 1, 0.36, 1);
+}
