@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+
 import {
   Geist,
   Geist_Mono,
@@ -9,19 +10,17 @@ import {
 import { ClerkProvider } from "@clerk/nextjs";
 
 import { cn } from "@/lib/utils";
+
 import StreamVideoProvider from "@/components/providers/StreamVideoProvider";
 
 import "@stream-io/video-react-sdk/dist/css/styles.css";
 import "./globals.css";
 
-/* =====================================================
-   FONTS
-===================================================== */
-
-const playfairDisplayHeading = Playfair_Display({
-  subsets: ["latin"],
-  variable: "--font-heading",
-});
+const playfairDisplayHeading =
+  Playfair_Display({
+    subsets: ["latin"],
+    variable: "--font-heading",
+  });
 
 const notoSans = Noto_Sans({
   subsets: ["latin"],
@@ -38,18 +37,11 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-/* =====================================================
-   METADATA
-===================================================== */
-
 export const metadata: Metadata = {
   title: "Cohiva",
-  description: "Meet, connect, and collaborate with Cohiva.",
+  description:
+    "Meet, connect, and collaborate with Cohiva.",
 };
-
-/* =====================================================
-   ROOT LAYOUT
-===================================================== */
 
 export default function RootLayout({
   children,
@@ -58,8 +50,10 @@ export default function RootLayout({
 }>) {
   return (
     <ClerkProvider>
+
       <html
         lang="en"
+        suppressHydrationWarning
         className={cn(
           "h-full antialiased",
           geistSans.variable,
@@ -69,12 +63,20 @@ export default function RootLayout({
           "font-sans"
         )}
       >
-        <body className="min-h-full flex flex-col">
+
+        <body
+          suppressHydrationWarning
+          className="min-h-full flex flex-col"
+        >
+
           <StreamVideoProvider>
             {children}
           </StreamVideoProvider>
+
         </body>
+
       </html>
+
     </ClerkProvider>
   );
 }

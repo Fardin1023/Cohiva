@@ -11,8 +11,13 @@ import {
 import {
   type ReactNode,
   useEffect,
+  useRef,
   useState,
 } from "react";
+
+/* =========================================================
+   TYPES
+========================================================= */
 
 type StreamVideoProviderProps = {
   children: ReactNode;
@@ -22,35 +27,36 @@ type ConnectedStreamProviderProps = {
   children: ReactNode;
   apiKey: string;
   userId: string;
-  userName: string;
-  userImage?: string;
 };
 
 /* =========================================================
    TOKEN PROVIDER
 ========================================================= */
 
-const getStreamToken = async (): Promise<string> => {
-  const response = await fetch(
-    "/api/stream-token"
-  );
+const getStreamToken =
+  async (): Promise<string> => {
+    const response =
+      await fetch(
+        "/api/stream-token"
+      );
 
-  if (!response.ok) {
-    throw new Error(
-      `Unable to get Stream token: ${response.status}`
-    );
-  }
+    if (!response.ok) {
+      throw new Error(
+        `Unable to get Stream token: ${response.status}`
+      );
+    }
 
-  const data = await response.json();
+    const data =
+      await response.json();
 
-  if (!data.token) {
-    throw new Error(
-      "Stream token was not returned."
-    );
-  }
+    if (!data.token) {
+      throw new Error(
+        "Stream token was not returned."
+      );
+    }
 
-  return data.token;
-};
+    return data.token;
+  };
 
 /* =========================================================
    CONNECTED STREAM PROVIDER
@@ -60,78 +66,261 @@ const ConnectedStreamProvider = ({
   children,
   apiKey,
   userId,
-  userName,
-  userImage,
 }: ConnectedStreamProviderProps) => {
-  const [client, setClient] =
+  const [
+    client,
+    setClient,
+  ] =
     useState<StreamVideoClient>();
 
+  /*
+   * Keep the SAME Stream client
+   * instead of recreating it on
+   * ordinary React renders.
+   */
+  const clientRef =
+    useRef<StreamVideoClient | null>(
+      null
+    );
+
+  const clientUserIdRef =
+    useRef<string | null>(
+      null
+    );
+
+  const clientApiKeyRef =
+    useRef<string | null>(
+      null
+    );
+
+  /*
+   * Important:
+   *
+   * Development mode can temporarily
+   * run effect cleanup and then mount
+   * the effect again.
+   *
+   * Instead of instantly disconnecting,
+   * we wait briefly. If the component
+   * comes straight back, that cleanup
+   * gets cancelled.
+   */
+  const disconnectTimerRef =
+    useRef<
+      ReturnType<
+        typeof setTimeout
+      > | null
+    >(null);
+
   useEffect(() => {
-    const streamUser: User = {
-      id: userId,
-      name: userName,
-      image: userImage,
-    };
+    /* =====================================================
+       CANCEL TEMPORARY DISCONNECT
+    ===================================================== */
+
+    if (
+      disconnectTimerRef.current
+    ) {
+      clearTimeout(
+        disconnectTimerRef.current
+      );
+
+      disconnectTimerRef.current =
+        null;
+    }
+
+    /* =====================================================
+       CHECK WHETHER EXISTING CLIENT CAN BE REUSED
+    ===================================================== */
+
+    const existingClient =
+      clientRef.current;
+
+    const userChanged =
+      clientUserIdRef.current !==
+      null &&
+      clientUserIdRef.current !==
+        userId;
+
+    const apiKeyChanged =
+      clientApiKeyRef.current !==
+      null &&
+      clientApiKeyRef.current !==
+        apiKey;
 
     /*
-     * Create the Stream client.
-     *
-     * This follows Stream's current
-     * recommended React pattern.
+     * If the actual authenticated
+     * Stream user changes, dispose
+     * the old client.
      */
-    const streamClient =
-      new StreamVideoClient({
-        apiKey,
-        user: streamUser,
-        tokenProvider: getStreamToken,
-      });
+    if (
+      existingClient &&
+      (
+        userChanged ||
+        apiKeyChanged
+      )
+    ) {
+      void existingClient
+        .disconnectUser()
+        .catch(
+          (
+            error
+          ) => {
+            console.error(
+              "Stream old client disconnect error:",
+              error
+            );
+          }
+        );
 
-    setClient(streamClient);
+      clientRef.current =
+        null;
+    }
+
+    /* =====================================================
+       CREATE CLIENT ONCE
+    ===================================================== */
+
+    if (
+      !clientRef.current
+    ) {
+      const streamUser: User =
+        {
+          id: userId,
+        };
+
+      const streamClient =
+        new StreamVideoClient({
+          apiKey,
+
+          user:
+            streamUser,
+
+          tokenProvider:
+            getStreamToken,
+
+          options: {
+            maxConnectUserRetries:
+              5,
+
+            onConnectUserError: (
+              error,
+              allErrors
+            ) => {
+              console.error(
+                "Stream connection error:",
+                error,
+                allErrors
+              );
+            },
+          },
+        });
+
+      clientRef.current =
+        streamClient;
+
+      clientUserIdRef.current =
+        userId;
+
+      clientApiKeyRef.current =
+        apiKey;
+    }
+
+    const activeClient =
+      clientRef.current;
+
+    setClient(
+      activeClient
+    );
+
+    /* =====================================================
+       CLEANUP
+    ===================================================== */
 
     return () => {
-      setClient(undefined);
+      /*
+       * Don't immediately disconnect.
+       *
+       * This protects us from temporary
+       * React development cleanup.
+       */
+      disconnectTimerRef.current =
+        setTimeout(
+          () => {
+            /*
+             * Only disconnect if this
+             * is STILL the currently
+             * stored Stream client.
+             */
+            if (
+              clientRef.current ===
+              activeClient
+            ) {
+              void activeClient
+                .disconnectUser()
+                .catch(
+                  (
+                    error
+                  ) => {
+                    console.error(
+                      "Stream disconnect error:",
+                      error
+                    );
+                  }
+                );
 
-      void streamClient
-        .disconnectUser()
-        .catch((error) => {
-          console.error(
-            "Stream disconnect error:",
-            error
-          );
-        });
+              clientRef.current =
+                null;
+
+              clientUserIdRef.current =
+                null;
+
+              clientApiKeyRef.current =
+                null;
+            }
+          },
+          750
+        );
     };
   }, [
     apiKey,
     userId,
-    userName,
-    userImage,
   ]);
 
-  /* STREAM CLIENT LOADING */
+  /* =====================================================
+     CONNECTING
+  ===================================================== */
 
   if (!client) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F9F0E0]">
+
         <div className="text-center">
+
           <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-[#CC3A63]/20 border-t-[#CC3A63]" />
 
           <p className="mt-4 text-sm font-semibold text-[#756E64]">
             Connecting Cohiva...
           </p>
+
         </div>
+
       </div>
     );
   }
 
   return (
-    <StreamVideo client={client}>
+    <StreamVideo
+      client={
+        client
+      }
+    >
       {children}
     </StreamVideo>
   );
 };
 
 /* =========================================================
-   MAIN STREAM PROVIDER
+   MAIN PROVIDER
 ========================================================= */
 
 const StreamVideoProvider = ({
@@ -141,68 +330,98 @@ const StreamVideoProvider = ({
     user,
     isLoaded,
     isSignedIn,
-  } = useUser();
+  } =
+    useUser();
 
   const apiKey =
-    process.env.NEXT_PUBLIC_STREAM_API_KEY;
+    process.env
+      .NEXT_PUBLIC_STREAM_API_KEY;
 
-  /* CLERK LOADING */
+  /* =====================================================
+     CLERK LOADING
+  ===================================================== */
 
   if (!isLoaded) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F9F0E0]">
+
         <div className="text-center">
+
           <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-[#CC3A63]/20 border-t-[#CC3A63]" />
 
           <p className="mt-4 text-sm font-semibold text-[#756E64]">
             Loading Cohiva...
           </p>
+
         </div>
+
+      </div>
+    );
+  }
+
+  /* =====================================================
+     SIGNED OUT
+  ===================================================== */
+
+  if (
+    !isSignedIn ||
+    !user
+  ) {
+    return (
+      <>
+        {children}
+      </>
+    );
+  }
+
+  /* =====================================================
+     STREAM CONFIG ERROR
+  ===================================================== */
+
+  if (!apiKey) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F9F0E0] p-6">
+
+        <div className="max-w-md rounded-[28px] bg-[#FFF7EB] p-8 text-center shadow-lg">
+
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#CC3A63]/10 text-2xl font-black text-[#CC3A63]">
+            !
+          </div>
+
+          <h2 className="mt-5 text-2xl font-black text-[#3D3732]">
+            Stream configuration missing
+          </h2>
+
+          <p className="mt-3 text-sm leading-6 text-[#756E64]">
+            NEXT_PUBLIC_STREAM_API_KEY
+            could not be found.
+          </p>
+
+        </div>
+
       </div>
     );
   }
 
   /*
-   * Logged-out users don't
-   * need Stream.
+   * IMPORTANT:
+   *
+   * Only user.id controls Stream
+   * client creation now.
+   *
+   * Changes to Clerk avatar/name
+   * will NOT recreate the Stream
+   * connection and kick the user
+   * out of a meeting.
    */
-  if (!isSignedIn || !user) {
-    return <>{children}</>;
-  }
-
-  /* CHECK STREAM KEY */
-
-  if (!apiKey) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#F9F0E0]">
-        <div className="rounded-2xl bg-[#FFF7EB] p-6 text-center shadow-sm">
-          <p className="font-bold text-[#CC3A63]">
-            Stream configuration missing
-          </p>
-
-          <p className="mt-2 text-sm text-[#756E64]">
-            NEXT_PUBLIC_STREAM_API_KEY
-            was not found.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  /* CLERK USER → STREAM USER */
-
-  const userName =
-    user.fullName ||
-    user.username ||
-    user.firstName ||
-    "Cohiva User";
-
   return (
     <ConnectedStreamProvider
-      apiKey={apiKey}
-      userId={user.id}
-      userName={userName}
-      userImage={user.imageUrl}
+      apiKey={
+        apiKey
+      }
+      userId={
+        user.id
+      }
     >
       {children}
     </ConnectedStreamProvider>
