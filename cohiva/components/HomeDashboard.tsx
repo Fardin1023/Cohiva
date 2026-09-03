@@ -1,42 +1,422 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import Image from "next/image";
-import { useEffect, useState } from "react";
 
-import ActionModal from "./ui/ActionModal";
+import {
+  useStreamVideoClient,
+} from "@stream-io/video-react-sdk";
+
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+
+import {
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
+
+import ActionModal from "./ActionModal";
+import ScheduleMeetingForm from "./meeting/ScheduleMeetingForm";
 
 type ModalType =
   | "new"
   | "join"
   | "schedule"
-  | "recordings"
   | null;
 
+type UpcomingMeetingInfo = {
+  id: string;
+  title: string;
+  startsAt: Date;
+};
+
+/* =========================================================
+   DATE LABEL
+========================================================= */
+
+const getMeetingDateLabel = (
+  meetingDate: Date
+) => {
+  const now = new Date();
+
+  const today = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
+
+  const meetingDay = new Date(
+    meetingDate.getFullYear(),
+    meetingDate.getMonth(),
+    meetingDate.getDate()
+  );
+
+  const difference =
+    meetingDay.getTime() -
+    today.getTime();
+
+  const dayDifference =
+    Math.round(
+      difference /
+        (1000 * 60 * 60 * 24)
+    );
+
+  if (dayDifference === 0) {
+    return "Today";
+  }
+
+  if (dayDifference === 1) {
+    return "Tomorrow";
+  }
+
+  return meetingDate.toLocaleDateString(
+    [],
+    {
+      month: "short",
+      day: "numeric",
+    }
+  );
+};
+
+/* =========================================================
+   HOME DASHBOARD
+========================================================= */
+
 const HomeDashboard = () => {
-  const { user, isLoaded } = useUser();
+  const router = useRouter();
 
-  const [currentTime, setCurrentTime] = useState<Date | null>(null);
+  const {
+    user,
+    isLoaded,
+  } = useUser();
 
-  const [activeModal, setActiveModal] =
-    useState<ModalType>(null);
+  const client =
+    useStreamVideoClient();
+
+  const userId =
+    user?.id;
+
+  const [
+    currentTime,
+    setCurrentTime,
+  ] =
+    useState<Date | null>(
+      null
+    );
+
+  const [
+    activeModal,
+    setActiveModal,
+  ] =
+    useState<ModalType>(
+      null
+    );
+
+  const [
+    meetingLink,
+    setMeetingLink,
+  ] =
+    useState("");
+
+  const [
+    joinError,
+    setJoinError,
+  ] =
+    useState("");
+
+  const [
+    upcomingMeeting,
+    setUpcomingMeeting,
+  ] =
+    useState<UpcomingMeetingInfo | null>(
+      null
+    );
+
+  const [
+    previousMeetingCount,
+    setPreviousMeetingCount,
+  ] =
+    useState(0);
+
+  const [
+    meetingsLoading,
+    setMeetingsLoading,
+  ] =
+    useState(true);
 
   /* =====================================================
-     LIVE TIME
+     CLOCK
   ===================================================== */
 
   useEffect(() => {
-    setCurrentTime(new Date());
+    setCurrentTime(
+      new Date()
+    );
 
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
+    const timer =
+      window.setInterval(
+        () => {
+          setCurrentTime(
+            new Date()
+          );
+        },
+        1000
+      );
 
-    return () => clearInterval(timer);
+    return () => {
+      window.clearInterval(
+        timer
+      );
+    };
   }, []);
 
   /* =====================================================
-     USER INFORMATION
+     LOAD REAL STREAM MEETING DATA
+  ===================================================== */
+
+  const loadDashboardMeetings =
+    useCallback(
+      async () => {
+        if (
+          !client ||
+          !userId
+        ) {
+          return;
+        }
+
+        try {
+          setMeetingsLoading(
+            true
+          );
+
+          const response =
+            await client.queryCalls({
+              filter_conditions: {
+                type: {
+                  $eq:
+                    "development",
+                },
+
+                members: {
+                  $in: [
+                    userId,
+                  ],
+                },
+              },
+
+              limit: 100,
+
+              watch: true,
+            });
+
+          const now =
+            Date.now();
+
+          /* =============================================
+             UPCOMING
+          ============================================= */
+
+          const futureCalls =
+            response.calls
+              .filter(
+                (call) => {
+                  const startsAt =
+                    call.state
+                      .startsAt;
+
+                  const custom =
+                    call.state
+                      .custom;
+
+                  const meetingType =
+                    typeof custom
+                      ?.cohiva_type ===
+                    "string"
+                      ? custom
+                          .cohiva_type
+                      : "";
+
+                  return (
+                    meetingType ===
+                      "scheduled" &&
+                    startsAt &&
+                    startsAt.getTime() >
+                      now
+                  );
+                }
+              )
+              .sort(
+                (
+                  first,
+                  second
+                ) => {
+                  const firstTime =
+                    first.state
+                      .startsAt
+                      ?.getTime() ??
+                    Infinity;
+
+                  const secondTime =
+                    second.state
+                      .startsAt
+                      ?.getTime() ??
+                    Infinity;
+
+                  return (
+                    firstTime -
+                    secondTime
+                  );
+                }
+              );
+
+          const nextCall =
+            futureCalls[0];
+
+          if (
+            nextCall &&
+            nextCall.state
+              .startsAt
+          ) {
+            const custom =
+              nextCall.state
+                .custom;
+
+            const title =
+              typeof custom
+                ?.title ===
+              "string"
+                ? custom.title
+                : "Cohiva Meeting";
+
+            setUpcomingMeeting({
+              id:
+                nextCall.id,
+
+              title,
+
+              startsAt:
+                nextCall.state
+                  .startsAt,
+            });
+          } else {
+            setUpcomingMeeting(
+              null
+            );
+          }
+
+          /* =============================================
+             PREVIOUS
+          ============================================= */
+
+          const previousCalls =
+            response.calls.filter(
+              (call) => {
+                const custom =
+                  call.state
+                    .custom;
+
+                const meetingType =
+                  typeof custom
+                    ?.cohiva_type ===
+                  "string"
+                    ? custom
+                        .cohiva_type
+                    : "";
+
+                /*
+                 * Personal Room should
+                 * never count as history.
+                 */
+                if (
+                  meetingType ===
+                  "personal"
+                ) {
+                  return false;
+                }
+
+                const endedAt =
+                  call.state
+                    .endedAt;
+
+                const startsAt =
+                  call.state
+                    .startsAt;
+
+                if (endedAt) {
+                  return true;
+                }
+
+                if (
+                  startsAt &&
+                  startsAt.getTime() <
+                    now
+                ) {
+                  return true;
+                }
+
+                return false;
+              }
+            );
+
+          setPreviousMeetingCount(
+            previousCalls.length
+          );
+        } catch (error) {
+          console.error(
+            "Dashboard meeting data error:",
+            error
+          );
+
+          setUpcomingMeeting(
+            null
+          );
+
+          setPreviousMeetingCount(
+            0
+          );
+        } finally {
+          setMeetingsLoading(
+            false
+          );
+        }
+      },
+      [
+        client,
+        userId,
+      ]
+    );
+
+  useEffect(() => {
+    if (
+      !client ||
+      !userId
+    ) {
+      return;
+    }
+
+    void loadDashboardMeetings();
+
+    const timer =
+      window.setInterval(
+        () => {
+          void loadDashboardMeetings();
+        },
+        30000
+      );
+
+    return () => {
+      window.clearInterval(
+        timer
+      );
+    };
+  }, [
+    client,
+    userId,
+    loadDashboardMeetings,
+  ]);
+
+  /* =====================================================
+     USER
   ===================================================== */
 
   const userName =
@@ -46,62 +426,184 @@ const HomeDashboard = () => {
     "there";
 
   /* =====================================================
-     TIME + DATE
+     CURRENT DATE + TIME
   ===================================================== */
 
-  const time = currentTime
-    ? currentTime.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "--:--";
+  const time =
+    currentTime
+      ? currentTime.toLocaleTimeString(
+          [],
+          {
+            hour:
+              "2-digit",
 
-  const date = currentTime
-    ? currentTime.toLocaleDateString([], {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-      })
-    : "";
+            minute:
+              "2-digit",
+          }
+        )
+      : "--:--";
+
+  const date =
+    currentTime
+      ? currentTime.toLocaleDateString(
+          [],
+          {
+            weekday:
+              "long",
+
+            month:
+              "long",
+
+            day:
+              "numeric",
+
+            year:
+              "numeric",
+          }
+        )
+      : "";
 
   /* =====================================================
-     SAMPLE MEETING DATA
-
-     Later we will replace this with actual database data.
+     UPCOMING DISPLAY
   ===================================================== */
 
-  const upcomingMeeting = {
-    title: "Team Weekly Meeting",
-    date: "Today",
-    time: "3:30 PM",
+  const upcomingDate =
+    upcomingMeeting
+      ? getMeetingDateLabel(
+          upcomingMeeting.startsAt
+        )
+      : "";
+
+  const upcomingTime =
+    upcomingMeeting
+      ? upcomingMeeting.startsAt.toLocaleTimeString(
+          [],
+          {
+            hour:
+              "2-digit",
+
+            minute:
+              "2-digit",
+          }
+        )
+      : "";
+
+  /* =====================================================
+     START INSTANT MEETING
+  ===================================================== */
+
+  const startInstantMeeting =
+    () => {
+      const callId =
+        crypto.randomUUID();
+
+      setActiveModal(
+        null
+      );
+
+      router.push(
+        `/meeting/${callId}?create=1`
+      );
+    };
+
+  /* =====================================================
+     EXTRACT MEETING ID
+  ===================================================== */
+
+  const getMeetingId = (
+    value: string
+  ): string | null => {
+    const trimmed =
+      value.trim();
+
+    if (!trimmed) {
+      return null;
+    }
+
+    try {
+      const url =
+        new URL(
+          trimmed
+        );
+
+      const match =
+        url.pathname.match(
+          /\/meeting\/([^/?#]+)/
+        );
+
+      if (
+        match?.[1]
+      ) {
+        return decodeURIComponent(
+          match[1]
+        );
+      }
+    } catch {
+      /*
+       * Not a complete URL.
+       * Treat as meeting ID.
+       */
+    }
+
+    const cleaned =
+      trimmed
+        .replace(
+          /^\/?meeting\//,
+          ""
+        )
+        .split(
+          /[?#]/
+        )[0]
+        ?.trim();
+
+    return (
+      cleaned ||
+      null
+    );
   };
 
-  const missedMeetings = [
-    {
-      id: 1,
-      title: "Project Discussion",
-      date: "Yesterday",
-      time: "4:00 PM",
-    },
-    {
-      id: 2,
-      title: "Design Review",
-      date: "August 30",
-      time: "11:30 AM",
-    },
-  ];
+  /* =====================================================
+     JOIN EXISTING MEETING
+  ===================================================== */
+
+  const joinExistingMeeting =
+    () => {
+      setJoinError("");
+
+      const meetingId =
+        getMeetingId(
+          meetingLink
+        );
+
+      if (!meetingId) {
+        setJoinError(
+          "Enter a meeting link or meeting code."
+        );
+
+        return;
+      }
+
+      setActiveModal(
+        null
+      );
+
+      router.push(
+        `/meeting/${encodeURIComponent(
+          meetingId
+        )}`
+      );
+    };
 
   return (
     <>
       <div className="w-full space-y-7 pb-10">
 
-        {/* =====================================================
-            HERO BANNER
-        ===================================================== */}
+        {/* =================================================
+            HERO
+        ================================================= */}
 
         <section className="relative min-h-[300px] overflow-hidden rounded-[30px]">
-          {/* Background */}
+
           <Image
             src="/images/bg.png"
             alt="Cohiva dashboard background"
@@ -110,22 +612,18 @@ const HomeDashboard = () => {
             className="object-cover object-center"
           />
 
-          {/* Soft overlay */}
           <div className="absolute inset-0 bg-gradient-to-r from-[#FFF7EB]/90 via-[#FFF7EB]/55 to-[#FFF7EB]/20" />
 
-          {/* Decorative glow */}
           <div className="absolute -left-12 -top-16 h-48 w-48 rounded-full bg-[#CC3A63]/15 blur-3xl" />
 
           <div className="absolute -bottom-16 right-[25%] h-52 w-52 rounded-full bg-[#A2AB73]/20 blur-3xl" />
 
-          {/* Banner content */}
           <div className="relative z-10 flex min-h-[300px] flex-col justify-between gap-7 p-6 sm:p-8 md:flex-row md:items-center lg:p-10">
 
-            {/* ==========================
-                LEFT SIDE
-            ========================== */}
+            {/* LEFT */}
 
-            <div className="max-w-[620px]">
+            <div className="max-w-[650px]">
+
               <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#8F9960]">
                 Your Cohiva Space
               </p>
@@ -137,67 +635,131 @@ const HomeDashboard = () => {
               </h1>
 
               <p className="mt-3 text-sm font-medium text-[#756E64] sm:text-base">
-                Your meetings, your people, your space.
+                Your meetings,
+                your people,
+                your space.
               </p>
 
-              {/* Notifications */}
+              {/* REAL MEETING DATA */}
+
               <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
 
-                {/* Upcoming meeting */}
-                <div className="group flex items-center gap-3 rounded-2xl border border-white/70 bg-[#FFF7EB]/85 px-4 py-3 shadow-md backdrop-blur-md transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
-                  {/* Live notification */}
-                  <span className="relative flex h-3 w-3 shrink-0">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#CC3A63] opacity-40" />
+                {/* UPCOMING */}
 
-                    <span className="relative inline-flex h-3 w-3 rounded-full bg-[#CC3A63]" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (
+                      upcomingMeeting
+                    ) {
+                      router.push(
+                        `/meeting/${upcomingMeeting.id}`
+                      );
+                    } else {
+                      router.push(
+                        "/upcoming"
+                      );
+                    }
+                  }}
+                  className="group flex min-w-[230px] items-center gap-3 rounded-2xl border border-white/70 bg-[#FFF7EB]/85 px-4 py-3 text-left shadow-md backdrop-blur-md transition-all duration-300 hover:-translate-y-1 hover:shadow-lg"
+                >
+                  <span className="relative flex h-3 w-3 shrink-0">
+
+                    {!meetingsLoading &&
+                      upcomingMeeting && (
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#CC3A63] opacity-40" />
+                      )}
+
+                    <span
+                      className={`relative inline-flex h-3 w-3 rounded-full ${
+                        upcomingMeeting
+                          ? "bg-[#CC3A63]"
+                          : "bg-[#A2AB73]"
+                      }`}
+                    />
+
                   </span>
 
                   <div>
+
                     <p className="text-[11px] font-bold uppercase tracking-wider text-[#CC3A63]">
                       Upcoming
                     </p>
 
-                    <p className="mt-0.5 text-sm font-bold text-[#3D3732]">
-                      {upcomingMeeting.title}
+                    {meetingsLoading ? (
+                      <p className="mt-0.5 text-sm font-bold text-[#756E64]">
+                        Checking schedule...
+                      </p>
+                    ) : upcomingMeeting ? (
+                      <>
+                        <p className="mt-0.5 max-w-[220px] truncate text-sm font-bold text-[#3D3732]">
+                          {
+                            upcomingMeeting.title
+                          }
+                        </p>
+
+                        <p className="mt-0.5 text-xs font-medium text-[#756E64]">
+                          {upcomingDate}
+                          {" • "}
+                          {upcomingTime}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="mt-0.5 text-sm font-bold text-[#3D3732]">
+                          No upcoming meetings
+                        </p>
+
+                        <p className="mt-0.5 text-xs font-medium text-[#756E64]">
+                          Schedule one anytime
+                        </p>
+                      </>
+                    )}
+
+                  </div>
+                </button>
+
+                {/* PREVIOUS */}
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push(
+                      "/previous"
+                    )
+                  }
+                  className="group flex items-center gap-3 rounded-2xl border border-[#CC3A63]/15 bg-[#CC3A63]/10 px-4 py-3 text-left backdrop-blur-md transition-all duration-300 hover:-translate-y-1 hover:bg-[#CC3A63]/15"
+                >
+
+                  <div className="flex h-9 min-w-9 items-center justify-center rounded-full bg-[#CC3A63] px-2 text-sm font-bold text-white">
+                    {meetingsLoading
+                      ? "..."
+                      : previousMeetingCount}
+                  </div>
+
+                  <div>
+
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-[#756E64]">
+                      Previous
                     </p>
 
-                    <p className="mt-0.5 text-xs font-medium text-[#756E64]">
-                      {upcomingMeeting.date} •{" "}
-                      {upcomingMeeting.time}
+                    <p className="mt-0.5 text-sm font-bold text-[#CC3A63]">
+                      {previousMeetingCount ===
+                      1
+                        ? "1 Past Meeting"
+                        : `${previousMeetingCount} Past Meetings`}
                     </p>
+
                   </div>
-                </div>
+                </button>
 
-                {/* Missed meetings */}
-                {missedMeetings.length > 0 && (
-                  <div className="group flex items-center gap-3 rounded-2xl border border-[#CC3A63]/15 bg-[#CC3A63]/10 px-4 py-3 backdrop-blur-md transition-all duration-300 hover:-translate-y-1 hover:bg-[#CC3A63]/15">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#CC3A63] text-sm font-bold text-white">
-                      {missedMeetings.length}
-                    </div>
-
-                    <div>
-                      <p className="text-[11px] font-bold uppercase tracking-wider text-[#756E64]">
-                        Missed
-                      </p>
-
-                      <p className="mt-0.5 text-sm font-bold text-[#CC3A63]">
-                        Previous Meetings
-                      </p>
-
-                      <p className="mt-0.5 text-xs text-[#756E64]">
-                        Tap recordings or history
-                      </p>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 
-            {/* ==========================
-                RIGHT SIDE - CLOCK
-            ========================== */}
+            {/* CLOCK */}
 
             <div className="cohiva-float w-full rounded-[26px] border border-white/70 bg-[#FFF7EB]/80 px-7 py-6 shadow-xl backdrop-blur-xl md:w-auto md:min-w-[285px] md:text-right">
+
               <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#8F9960]">
                 Local Time
               </p>
@@ -213,17 +775,22 @@ const HomeDashboard = () => {
               <div className="mt-5 inline-flex rounded-full bg-[#A2AB73]/15 px-4 py-2 text-xs font-semibold text-[#737C4C]">
                 Your local timezone
               </div>
+
             </div>
+
           </div>
         </section>
 
-        {/* =====================================================
-            QUICK ACTION HEADING
-        ===================================================== */}
+        {/* =================================================
+            QUICK ACTIONS
+        ================================================= */}
 
         <section>
+
           <div className="mb-5 flex items-end justify-between gap-4">
+
             <div>
+
               <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#8F9960]">
                 Quick Actions
               </p>
@@ -231,36 +798,40 @@ const HomeDashboard = () => {
               <h2 className="mt-1 text-2xl font-bold text-[#3D3732] sm:text-3xl">
                 What are we doing today?
               </h2>
+
             </div>
 
             <p className="hidden text-sm font-medium text-[#756E64] md:block">
-              Pick one and jump right in ✨
+              Pick one and jump
+              right in ✨
             </p>
-          </div>
 
-          {/* =====================================================
-              ACTION CARDS
-          ===================================================== */}
+          </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
 
-            {/* ========================
-                NEW MEETING
-            ======================== */}
+            {/* NEW MEETING */}
 
             <button
               type="button"
-              onClick={() => setActiveModal("new")}
+              onClick={() =>
+                setActiveModal(
+                  "new"
+                )
+              }
               className="cohiva-action-card cohiva-card-delay-1 group relative min-h-[220px] overflow-hidden rounded-[28px] bg-[#CC3A63] p-6 text-left text-white"
             >
+
               <div className="cohiva-shine" />
 
-              <div className="relative z-10 flex h-full min-h-[170px] flex-col justify-between">
-                <div className="cohiva-icon-bounce flex h-14 w-14 items-center justify-center rounded-2xl bg-white/20 text-4xl font-light backdrop-blur">
+              <div className="relative z-10 flex min-h-[170px] flex-col justify-between">
+
+                <div className="cohiva-icon-bounce flex h-14 w-14 items-center justify-center rounded-2xl bg-white/20 text-4xl backdrop-blur">
                   +
                 </div>
 
                 <div>
+
                   <p className="text-2xl font-bold">
                     New Meeting
                   </p>
@@ -268,59 +839,73 @@ const HomeDashboard = () => {
                   <p className="mt-2 text-sm font-medium text-white/80">
                     Start instantly
                   </p>
+
                 </div>
+
               </div>
 
               <div className="absolute -bottom-10 -right-10 h-32 w-32 rounded-full bg-white/10" />
+
             </button>
 
-            {/* ========================
-                JOIN MEETING
-            ======================== */}
+            {/* JOIN */}
 
             <button
               type="button"
-              onClick={() => setActiveModal("join")}
+              onClick={() =>
+                setActiveModal(
+                  "join"
+                )
+              }
               className="cohiva-action-card cohiva-card-delay-2 group relative min-h-[220px] overflow-hidden rounded-[28px] bg-[#A2AB73] p-6 text-left text-white"
             >
+
               <div className="cohiva-shine" />
 
-              <div className="relative z-10 flex h-full min-h-[170px] flex-col justify-between">
+              <div className="relative z-10 flex min-h-[170px] flex-col justify-between">
+
                 <div className="cohiva-icon-bounce flex h-14 w-14 items-center justify-center rounded-2xl bg-white/20 text-3xl backdrop-blur">
                   ↗
                 </div>
 
                 <div>
+
                   <p className="text-2xl font-bold">
                     Join Meeting
                   </p>
 
                   <p className="mt-2 text-sm font-medium text-white/80">
-                    Enter an invitation link
+                    Enter invitation link
                   </p>
+
                 </div>
+
               </div>
 
-              <div className="absolute -right-8 top-4 h-28 w-28 rotate-12 rounded-[36px] border-2 border-white/15" />
             </button>
 
-            {/* ========================
-                SCHEDULE MEETING
-            ======================== */}
+            {/* SCHEDULE */}
 
             <button
               type="button"
-              onClick={() => setActiveModal("schedule")}
+              onClick={() =>
+                setActiveModal(
+                  "schedule"
+                )
+              }
               className="cohiva-action-card cohiva-card-delay-3 group relative min-h-[220px] overflow-hidden rounded-[28px] bg-[#B9687C] p-6 text-left text-white"
             >
+
               <div className="cohiva-shine" />
 
-              <div className="relative z-10 flex h-full min-h-[170px] flex-col justify-between">
+              <div className="relative z-10 flex min-h-[170px] flex-col justify-between">
+
                 <div className="cohiva-icon-bounce flex h-14 w-14 items-center justify-center rounded-2xl bg-white/20 text-3xl backdrop-blur">
                   ◫
                 </div>
 
                 <div>
+
                   <p className="text-2xl font-bold">
                     Schedule
                   </p>
@@ -328,31 +913,35 @@ const HomeDashboard = () => {
                   <p className="mt-2 text-sm font-medium text-white/80">
                     Plan your meeting
                   </p>
+
                 </div>
+
               </div>
 
-              <div className="absolute -bottom-14 left-5 h-32 w-32 rounded-full border-[18px] border-white/10" />
             </button>
 
-            {/* ========================
-                RECORDINGS
-            ======================== */}
+            {/* RECORDINGS */}
 
             <button
               type="button"
               onClick={() =>
-                setActiveModal("recordings")
+                router.push(
+                  "/recordings"
+                )
               }
               className="cohiva-action-card cohiva-card-delay-4 group relative min-h-[220px] overflow-hidden rounded-[28px] bg-[#403A35] p-6 text-left text-[#FFF7EB]"
             >
+
               <div className="cohiva-shine" />
 
-              <div className="relative z-10 flex h-full min-h-[170px] flex-col justify-between">
+              <div className="relative z-10 flex min-h-[170px] flex-col justify-between">
+
                 <div className="cohiva-icon-bounce flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FFF7EB]/15 text-3xl backdrop-blur">
                   ▶
                 </div>
 
                 <div>
+
                   <p className="text-2xl font-bold">
                     Recordings
                   </p>
@@ -360,76 +949,94 @@ const HomeDashboard = () => {
                   <p className="mt-2 text-sm font-medium text-[#FFF7EB]/70">
                     Rewatch your moments
                   </p>
+
                 </div>
+
               </div>
 
               <div className="absolute right-4 top-4 h-24 w-24 rounded-full bg-[#CC3A63]/25 blur-xl" />
+
             </button>
+
           </div>
         </section>
 
- 
       </div>
 
-      {/* =========================================================
+      {/* =================================================
           NEW MEETING MODAL
-      ========================================================= */}
+      ================================================= */}
 
       <ActionModal
-        open={activeModal === "new"}
-        onClose={() => setActiveModal(null)}
+        open={
+          activeModal ===
+          "new"
+        }
+        onClose={() =>
+          setActiveModal(
+            null
+          )
+        }
         title="Start a new meeting"
         subtitle="Create an instant Cohiva room and invite your people."
       >
+
         <div className="space-y-4">
+
           <div className="rounded-2xl bg-[#CC3A63]/10 p-4">
+
             <p className="font-bold text-[#3D3732]">
               Instant Meeting
             </p>
 
             <p className="mt-1 text-sm leading-6 text-[#756E64]">
-              Your private Cohiva meeting room will be
-              created immediately.
+              A unique Cohiva room
+              will be created
+              immediately.
             </p>
-          </div>
 
-          <div className="flex items-center gap-3 rounded-2xl border border-[#403A35]/10 bg-white/60 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#CC3A63] text-xl text-white">
-              +
-            </div>
-
-            <div>
-              <p className="text-sm font-bold text-[#3D3732]">
-                Ready when you are
-              </p>
-
-              <p className="text-xs text-[#756E64]">
-                Camera and microphone settings come next.
-              </p>
-            </div>
           </div>
 
           <button
             type="button"
-            className="w-full rounded-2xl bg-[#CC3A63] px-5 py-3.5 font-bold text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#B83057] hover:shadow-lg"
+            onClick={
+              startInstantMeeting
+            }
+            className="w-full rounded-2xl bg-[#CC3A63] px-5 py-3.5 font-bold text-white transition hover:bg-[#B83057]"
           >
             Start Meeting
           </button>
+
         </div>
+
       </ActionModal>
 
-      {/* =========================================================
-          JOIN MEETING MODAL
-      ========================================================= */}
+      {/* =================================================
+          JOIN MODAL
+      ================================================= */}
 
       <ActionModal
-        open={activeModal === "join"}
-        onClose={() => setActiveModal(null)}
+        open={
+          activeModal ===
+          "join"
+        }
+        onClose={() => {
+          setActiveModal(
+            null
+          );
+
+          setJoinError(
+            ""
+          );
+        }}
         title="Join a meeting"
         subtitle="Paste an invitation link or enter a meeting code."
       >
+
         <div className="space-y-4">
+
           <div>
+
             <label
               htmlFor="meeting-link"
               className="mb-2 block text-sm font-bold text-[#3D3732]"
@@ -440,173 +1047,84 @@ const HomeDashboard = () => {
             <input
               id="meeting-link"
               type="text"
-              placeholder="Paste your Cohiva meeting link..."
-              className="w-full rounded-2xl border border-[#403A35]/15 bg-white px-4 py-3.5 text-[#3D3732] outline-none transition-all placeholder:text-[#756E64]/50 focus:border-[#CC3A63] focus:ring-4 focus:ring-[#CC3A63]/10"
-            />
-          </div>
+              value={
+                meetingLink
+              }
+              onChange={(
+                event
+              ) => {
+                setMeetingLink(
+                  event.target.value
+                );
 
-          <p className="text-xs leading-5 text-[#756E64]">
-            Example: cohiva.com/meeting/abc123
-          </p>
+                setJoinError(
+                  ""
+                );
+              }}
+              onKeyDown={(
+                event
+              ) => {
+                if (
+                  event.key ===
+                  "Enter"
+                ) {
+                  joinExistingMeeting();
+                }
+              }}
+              placeholder="Paste Cohiva link or meeting code..."
+              className="w-full rounded-2xl border border-[#403A35]/15 bg-white px-4 py-3.5 text-[#3D3732] outline-none placeholder:text-[#756E64]/50 focus:border-[#CC3A63] focus:ring-4 focus:ring-[#CC3A63]/10"
+            />
+
+            {joinError && (
+              <p className="mt-2 text-sm font-semibold text-[#CC3A63]">
+                {joinError}
+              </p>
+            )}
+
+          </div>
 
           <button
             type="button"
-            className="w-full rounded-2xl bg-[#A2AB73] px-5 py-3.5 font-bold text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#8F9960] hover:shadow-lg"
+            onClick={
+              joinExistingMeeting
+            }
+            className="w-full rounded-2xl bg-[#A2AB73] px-5 py-3.5 font-bold text-white transition hover:bg-[#8F9960]"
           >
             Join Now
           </button>
+
         </div>
+
       </ActionModal>
 
-      {/* =========================================================
-          SCHEDULE MEETING MODAL
-      ========================================================= */}
+      {/* =================================================
+          SCHEDULE MODAL
+      ================================================= */}
 
       <ActionModal
-        open={activeModal === "schedule"}
-        onClose={() => setActiveModal(null)}
+        open={
+          activeModal ===
+          "schedule"
+        }
+        onClose={() =>
+          setActiveModal(
+            null
+          )
+        }
         title="Schedule a meeting"
-        subtitle="Choose when you want everyone to meet."
+        subtitle="Choose a date and time for your next Cohiva meeting."
       >
-        <div className="space-y-4">
-          {/* Meeting title */}
-          <div>
-            <label
-              htmlFor="meeting-title"
-              className="mb-2 block text-sm font-bold text-[#3D3732]"
-            >
-              Meeting title
-            </label>
 
-            <input
-              id="meeting-title"
-              type="text"
-              placeholder="Weekly project meeting"
-              className="w-full rounded-2xl border border-[#403A35]/15 bg-white px-4 py-3.5 text-[#3D3732] outline-none transition-all placeholder:text-[#756E64]/50 focus:border-[#B9687C] focus:ring-4 focus:ring-[#B9687C]/10"
-            />
-          </div>
+        <ScheduleMeetingForm
+          onScheduled={() =>
+            setActiveModal(
+              null
+            )
+          }
+        />
 
-          {/* Date and Time */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label
-                htmlFor="meeting-date"
-                className="mb-2 block text-sm font-bold text-[#3D3732]"
-              >
-                Date
-              </label>
-
-              <input
-                id="meeting-date"
-                type="date"
-                className="w-full rounded-2xl border border-[#403A35]/15 bg-white px-4 py-3.5 text-[#3D3732] outline-none transition focus:border-[#B9687C]"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="meeting-time"
-                className="mb-2 block text-sm font-bold text-[#3D3732]"
-              >
-                Time
-              </label>
-
-              <input
-                id="meeting-time"
-                type="time"
-                className="w-full rounded-2xl border border-[#403A35]/15 bg-white px-4 py-3.5 text-[#3D3732] outline-none transition focus:border-[#B9687C]"
-              />
-            </div>
-          </div>
-
-          {/* Description */}
-          <div>
-            <label
-              htmlFor="meeting-description"
-              className="mb-2 block text-sm font-bold text-[#3D3732]"
-            >
-              Description
-              <span className="ml-1 font-normal text-[#756E64]">
-                (optional)
-              </span>
-            </label>
-
-            <textarea
-              id="meeting-description"
-              placeholder="What's this meeting about?"
-              rows={3}
-              className="w-full resize-none rounded-2xl border border-[#403A35]/15 bg-white px-4 py-3.5 text-[#3D3732] outline-none transition-all placeholder:text-[#756E64]/50 focus:border-[#B9687C] focus:ring-4 focus:ring-[#B9687C]/10"
-            />
-          </div>
-
-          <button
-            type="button"
-            className="w-full rounded-2xl bg-[#B9687C] px-5 py-3.5 font-bold text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#A85D70] hover:shadow-lg"
-          >
-            Schedule Meeting
-          </button>
-        </div>
       </ActionModal>
 
-      {/* =========================================================
-          RECORDINGS MODAL
-      ========================================================= */}
-
-      <ActionModal
-        open={activeModal === "recordings"}
-        onClose={() => setActiveModal(null)}
-        title="Your recordings"
-        subtitle="Revisit your previous conversations."
-      >
-        <div className="space-y-3">
-          {/* Sample recording */}
-          <div className="flex items-center justify-between gap-4 rounded-2xl border border-[#403A35]/10 bg-white/70 p-4">
-            <div className="min-w-0">
-              <p className="truncate font-bold text-[#3D3732]">
-                Project Discussion
-              </p>
-
-              <p className="mt-1 text-xs font-medium text-[#756E64]">
-                August 31 • 42 minutes
-              </p>
-            </div>
-
-            <button
-              type="button"
-              className="shrink-0 rounded-xl bg-[#403A35] px-4 py-2 text-sm font-bold text-[#FFF7EB] transition-all hover:bg-[#CC3A63]"
-            >
-              Watch
-            </button>
-          </div>
-
-          {/* Sample recording */}
-          <div className="flex items-center justify-between gap-4 rounded-2xl border border-[#403A35]/10 bg-white/70 p-4">
-            <div className="min-w-0">
-              <p className="truncate font-bold text-[#3D3732]">
-                Weekly Design Review
-              </p>
-
-              <p className="mt-1 text-xs font-medium text-[#756E64]">
-                August 28 • 28 minutes
-              </p>
-            </div>
-
-            <button
-              type="button"
-              className="shrink-0 rounded-xl bg-[#403A35] px-4 py-2 text-sm font-bold text-[#FFF7EB] transition-all hover:bg-[#CC3A63]"
-            >
-              Watch
-            </button>
-          </div>
-
-          <button
-            type="button"
-            className="mt-2 w-full rounded-2xl bg-[#403A35] px-5 py-3.5 font-bold text-[#FFF7EB] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#514940] hover:shadow-lg"
-          >
-            View All Recordings
-          </button>
-        </div>
-      </ActionModal>
     </>
   );
 };

@@ -1,11 +1,13 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
+
 import {
   StreamVideo,
   StreamVideoClient,
   type User,
 } from "@stream-io/video-react-sdk";
+
 import {
   type ReactNode,
   useEffect,
@@ -19,15 +21,19 @@ type StreamVideoProviderProps = {
 type ConnectedStreamProviderProps = {
   children: ReactNode;
   apiKey: string;
-  streamUser: User;
+  userId: string;
+  userName: string;
+  userImage?: string;
 };
 
-/* =====================================================
-   GET STREAM TOKEN
-===================================================== */
+/* =========================================================
+   TOKEN PROVIDER
+========================================================= */
 
 const getStreamToken = async (): Promise<string> => {
-  const response = await fetch("/api/stream-token");
+  const response = await fetch(
+    "/api/stream-token"
+  );
 
   if (!response.ok) {
     throw new Error(
@@ -38,27 +44,43 @@ const getStreamToken = async (): Promise<string> => {
   const data = await response.json();
 
   if (!data.token) {
-    throw new Error("Stream token was not returned.");
+    throw new Error(
+      "Stream token was not returned."
+    );
   }
 
   return data.token;
 };
 
-/* =====================================================
-   CONNECTED STREAM CLIENT
-===================================================== */
+/* =========================================================
+   CONNECTED STREAM PROVIDER
+========================================================= */
 
 const ConnectedStreamProvider = ({
   children,
   apiKey,
-  streamUser,
+  userId,
+  userName,
+  userImage,
 }: ConnectedStreamProviderProps) => {
   const [client, setClient] =
     useState<StreamVideoClient>();
 
   useEffect(() => {
+    const streamUser: User = {
+      id: userId,
+      name: userName,
+      image: userImage,
+    };
+
+    /*
+     * Create the Stream client.
+     *
+     * This follows Stream's current
+     * recommended React pattern.
+     */
     const streamClient =
-      StreamVideoClient.getOrCreateInstance({
+      new StreamVideoClient({
         apiKey,
         user: streamUser,
         tokenProvider: getStreamToken,
@@ -67,7 +89,9 @@ const ConnectedStreamProvider = ({
     setClient(streamClient);
 
     return () => {
-      streamClient
+      setClient(undefined);
+
+      void streamClient
         .disconnectUser()
         .catch((error) => {
           console.error(
@@ -76,7 +100,14 @@ const ConnectedStreamProvider = ({
           );
         });
     };
-  }, [apiKey, streamUser]);
+  }, [
+    apiKey,
+    userId,
+    userName,
+    userImage,
+  ]);
+
+  /* STREAM CLIENT LOADING */
 
   if (!client) {
     return (
@@ -99,9 +130,9 @@ const ConnectedStreamProvider = ({
   );
 };
 
-/* =====================================================
-   MAIN PROVIDER
-===================================================== */
+/* =========================================================
+   MAIN STREAM PROVIDER
+========================================================= */
 
 const StreamVideoProvider = ({
   children,
@@ -115,7 +146,7 @@ const StreamVideoProvider = ({
   const apiKey =
     process.env.NEXT_PUBLIC_STREAM_API_KEY;
 
-  /* Clerk loading */
+  /* CLERK LOADING */
 
   if (!isLoaded) {
     return (
@@ -131,13 +162,15 @@ const StreamVideoProvider = ({
     );
   }
 
-  /* Logged-out users don't need Stream */
-
+  /*
+   * Logged-out users don't
+   * need Stream.
+   */
   if (!isSignedIn || !user) {
     return <>{children}</>;
   }
 
-  /* Check API key */
+  /* CHECK STREAM KEY */
 
   if (!apiKey) {
     return (
@@ -148,29 +181,28 @@ const StreamVideoProvider = ({
           </p>
 
           <p className="mt-2 text-sm text-[#756E64]">
-            NEXT_PUBLIC_STREAM_API_KEY was not found.
+            NEXT_PUBLIC_STREAM_API_KEY
+            was not found.
           </p>
         </div>
       </div>
     );
   }
 
-  /* Clerk user -> Stream user */
+  /* CLERK USER → STREAM USER */
 
-  const streamUser: User = {
-    id: user.id,
-    name:
-      user.fullName ||
-      user.username ||
-      user.firstName ||
-      "Cohiva User",
-    image: user.imageUrl,
-  };
+  const userName =
+    user.fullName ||
+    user.username ||
+    user.firstName ||
+    "Cohiva User";
 
   return (
     <ConnectedStreamProvider
       apiKey={apiKey}
-      streamUser={streamUser}
+      userId={user.id}
+      userName={userName}
+      userImage={user.imageUrl}
     >
       {children}
     </ConnectedStreamProvider>

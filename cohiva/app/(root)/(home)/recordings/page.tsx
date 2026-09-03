@@ -1,13 +1,9 @@
-import { auth } from "@clerk/nextjs/server";
+import Recordings from "@/components/meeting/Recordings";
 
-const Recordings = async () => {
-  await auth.protect();
-
+const RecordingsPage = () => {
   return (
-    <div>
-      {/* keep your existing page here */}
-    </div>
+    <Recordings />
   );
 };
 
-export default Recordings;
+export default RecordingsPage;

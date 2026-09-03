@@ -1,13 +1,9 @@
-import { auth } from "@clerk/nextjs/server";
+import PreviousMeetings from "@/components/meeting/PreviousMeetings";
 
-const Previous = async () => {
-  await auth.protect();
-
+const PreviousPage = () => {
   return (
-    <div>
-      {/* keep your existing page here */}
-    </div>
+    <PreviousMeetings />
   );
 };
 
-export default Previous;
+export default PreviousPage;

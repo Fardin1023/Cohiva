@@ -1,13 +1,9 @@
-import { auth } from "@clerk/nextjs/server";
+import PersonalRoom from "@/components/meeting/PersonalRoom";
 
-const PersonalRoom = async () => {
-  await auth.protect();
-
+const PersonalRoomPage = () => {
   return (
-    <div>
-      {/* keep your existing page here */}
-    </div>
+    <PersonalRoom />
   );
 };
 
-export default PersonalRoom;
+export default PersonalRoomPage;
