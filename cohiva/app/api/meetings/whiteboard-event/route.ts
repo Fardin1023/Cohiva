@@ -13,23 +13,9 @@ import {
 const WHITEBOARD_EVENT =
   "cohiva-whiteboard";
 
-/*
- * One browser request can contain
- * multiple Stream events.
- *
- * This greatly reduces browser ->
- * Cohiva server requests for a
- * large whiteboard snapshot.
- */
 const MAX_EVENTS_PER_REQUEST =
   256;
 
-/*
- * Stream custom events have a
- * 5 KB limit.
- *
- * Keep a comfortable safety margin.
- */
 const MAX_CUSTOM_EVENT_BYTES =
   4500;
 
@@ -51,7 +37,7 @@ type WhiteboardRelayRequest = {
 };
 
 /* =========================================================
-   HELPERS
+   VALID ACTIONS
 ========================================================= */
 
 const validActions =
@@ -61,6 +47,10 @@ const validActions =
     "empty-snapshot",
     "clear",
   ]);
+
+/* =========================================================
+   SIZE
+========================================================= */
 
 const getByteLength = (
   value: unknown
@@ -76,6 +66,11 @@ const getByteLength = (
 
 /* =========================================================
    POST
+
+   THIS POST EXPORT IS IMPORTANT.
+
+   Your current 405 means Next.js
+   isn't seeing a valid POST handler.
 ========================================================= */
 
 export async function POST(
@@ -133,7 +128,8 @@ export async function POST(
       !Array.isArray(
         events
       ) ||
-      events.length === 0
+      events.length ===
+        0
     ) {
       return Response.json(
         {
@@ -153,7 +149,7 @@ export async function POST(
       return Response.json(
         {
           error:
-            "Too many whiteboard events in one request.",
+            "Too many whiteboard events.",
         },
         {
           status: 413,
@@ -162,7 +158,7 @@ export async function POST(
     }
 
     /* =====================================================
-       STREAM ENV
+       ENVIRONMENT
     ===================================================== */
 
     const apiKey =
@@ -180,7 +176,7 @@ export async function POST(
       return Response.json(
         {
           error:
-            "Stream server configuration is missing.",
+            "Stream configuration is missing.",
         },
         {
           status: 500,
@@ -242,14 +238,6 @@ export async function POST(
         );
       }
 
-      /*
-       * Server controls:
-       *
-       * - event type
-       * - sender identity
-       *
-       * The browser cannot spoof them.
-       */
       const custom = {
         ...event,
 
@@ -260,19 +248,16 @@ export async function POST(
           userId,
       };
 
-      const eventBytes =
+      if (
         getByteLength(
           custom
-        );
-
-      if (
-        eventBytes >
+        ) >
         MAX_CUSTOM_EVENT_BYTES
       ) {
         return Response.json(
           {
             error:
-              "A whiteboard event is too large.",
+              "Whiteboard event is too large.",
           },
           {
             status: 413,
@@ -286,7 +271,7 @@ export async function POST(
     }
 
     /* =====================================================
-       STREAM SERVER CLIENT
+       STREAM SERVER
     ===================================================== */
 
     const streamClient =
@@ -302,16 +287,11 @@ export async function POST(
       );
 
     /* =====================================================
-       RELAY
+       RELAY EVENTS
 
-       Send a few events concurrently.
-
-       Chunks carry:
-       batchId
-       index
-       total
-
-       so receiving order does not matter.
+       Stream server custom events are
+       delivered to users watching
+       the call.
     ===================================================== */
 
     const CONCURRENCY =

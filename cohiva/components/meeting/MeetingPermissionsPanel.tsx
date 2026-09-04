@@ -13,6 +13,8 @@ import {
   useState,
 } from "react";
 
+import MeetingAccessSettings from "./MeetingAccessSettings";
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -20,13 +22,22 @@ import {
 type MeetingPermissionsPanelProps = {
   open: boolean;
   onClose: () => void;
+  callId: string;
 };
 
 export type CohivaPermissions = {
   studentMic: boolean;
   studentCamera: boolean;
   studentScreenShare: boolean;
+
+  /*
+   * Kept so older Cohiva meetings
+   * don't break.
+   *
+   * Recording is forced to teacher-only.
+   */
   studentRecording: boolean;
+
   studentWhiteboard: boolean;
 };
 
@@ -37,16 +48,11 @@ export type CohivaPermissions = {
 export const DEFAULT_COHIVA_PERMISSIONS:
   CohivaPermissions = {
   studentMic: true,
+
   studentCamera: true,
+
   studentScreenShare: true,
 
-  /*
-   * Recording is controlled by Cohiva UI.
-   *
-   * IMPORTANT:
-   * Stream's updateUserPermissions API
-   * does NOT accept recording capabilities.
-   */
   studentRecording: false,
 
   studentWhiteboard: false,
@@ -59,6 +65,7 @@ export const DEFAULT_COHIVA_PERMISSIONS:
 const MeetingPermissionsPanel = ({
   open,
   onClose,
+  callId,
 }: MeetingPermissionsPanelProps) => {
   const call =
     useCall();
@@ -87,9 +94,22 @@ const MeetingPermissionsPanel = ({
   const permissions:
     CohivaPermissions = {
     ...DEFAULT_COHIVA_PERMISSIONS,
+
     ...savedPermissions,
+
+    /*
+     * Never allow an old meeting
+     * to restore student recording.
+     */
+    studentRecording:
+      false,
   };
 
+  /*
+   * Keep latest policy available
+   * inside effects without causing
+   * unnecessary effect loops.
+   */
   const permissionsRef =
     useRef<CohivaPermissions>(
       permissions
@@ -102,7 +122,7 @@ const MeetingPermissionsPanel = ({
      STUDENT IDS
   ===================================================== */
 
-  const remoteUserIds =
+  const studentIds =
     useMemo(
       () =>
         Array.from(
@@ -116,9 +136,11 @@ const MeetingPermissionsPanel = ({
               )
               .filter(
                 (
-                  id
-                ): id is string =>
-                  Boolean(id)
+                  userId
+                ): userId is string =>
+                  Boolean(
+                    userId
+                  )
               )
           )
         ),
@@ -127,14 +149,18 @@ const MeetingPermissionsPanel = ({
       ]
     );
 
-  const remoteUserKey =
-    remoteUserIds
+  /*
+   * Stable value for detecting
+   * participant membership changes.
+   */
+  const participantKey =
+    studentIds
       .slice()
       .sort()
       .join("|");
 
   /* =====================================================
-     STATE
+     UI STATE
   ===================================================== */
 
   const [
@@ -149,29 +175,23 @@ const MeetingPermissionsPanel = ({
   ] =
     useState("");
 
-  const [
-    muting,
-    setMuting,
-  ] =
-    useState(false);
-
   /* =====================================================
-     APPLY STREAM MEDIA PERMISSIONS
+     APPLY ACTUAL STREAM PERMISSIONS
 
      IMPORTANT:
-     Stream only allows dynamic moderation of:
+     muteUser() is not used here.
 
-     - SEND_AUDIO
-     - SEND_VIDEO
-     - SCREENSHARE
-
-     Recording is NOT included here.
+     revokePermissions() prevents the
+     student from simply turning the
+     device back on.
   ===================================================== */
 
   const applyStreamPermissions =
     async (
-      userIds: string[],
-      settings:
+      userIds:
+        string[],
+
+      policy:
         CohivaPermissions
     ) => {
       if (!call) {
@@ -183,27 +203,25 @@ const MeetingPermissionsPanel = ({
           async (
             userId
           ) => {
-            const grant:
-              OwnCapability[] =
-              [];
-
-            const revoke:
-              OwnCapability[] =
-              [];
-
             /* ===========================================
                MICROPHONE
             =========================================== */
 
             if (
-              settings.studentMic
+              policy.studentMic
             ) {
-              grant.push(
-                OwnCapability.SEND_AUDIO
+              await call.grantPermissions(
+                userId,
+                [
+                  OwnCapability.SEND_AUDIO,
+                ]
               );
             } else {
-              revoke.push(
-                OwnCapability.SEND_AUDIO
+              await call.revokePermissions(
+                userId,
+                [
+                  OwnCapability.SEND_AUDIO,
+                ]
               );
             }
 
@@ -212,14 +230,20 @@ const MeetingPermissionsPanel = ({
             =========================================== */
 
             if (
-              settings.studentCamera
+              policy.studentCamera
             ) {
-              grant.push(
-                OwnCapability.SEND_VIDEO
+              await call.grantPermissions(
+                userId,
+                [
+                  OwnCapability.SEND_VIDEO,
+                ]
               );
             } else {
-              revoke.push(
-                OwnCapability.SEND_VIDEO
+              await call.revokePermissions(
+                userId,
+                [
+                  OwnCapability.SEND_VIDEO,
+                ]
               );
             }
 
@@ -228,56 +252,49 @@ const MeetingPermissionsPanel = ({
             =========================================== */
 
             if (
-              settings.studentScreenShare
+              policy.studentScreenShare
             ) {
-              grant.push(
-                OwnCapability.SCREENSHARE
+              await call.grantPermissions(
+                userId,
+                [
+                  OwnCapability.SCREENSHARE,
+                ]
               );
             } else {
-              revoke.push(
-                OwnCapability.SCREENSHARE
+              await call.revokePermissions(
+                userId,
+                [
+                  OwnCapability.SCREENSHARE,
+                ]
               );
             }
-
-            /*
-             * DO NOT put:
-             *
-             * START_RECORD_CALL
-             * STOP_RECORD_CALL
-             *
-             * here.
-             */
-
-            await call.updateUserPermissions({
-              user_id:
-                userId,
-
-              grant_permissions:
-                grant,
-
-              revoke_permissions:
-                revoke,
-            });
           }
         )
       );
     };
 
   /* =====================================================
-     APPLY CURRENT RULES TO NEW STUDENTS
+     APPLY CLASS POLICY TO NEW PARTICIPANTS
+
+     Example:
+     teacher blocks microphones,
+     then a new student enters.
+
+     The student must also receive the
+     existing blocked microphone policy.
   ===================================================== */
 
   useEffect(() => {
     if (
       !call ||
       !call.isCreatedByMe ||
-      !remoteUserKey
+      !participantKey
     ) {
       return;
     }
 
     const ids =
-      remoteUserKey.split(
+      participantKey.split(
         "|"
       );
 
@@ -288,30 +305,28 @@ const MeetingPermissionsPanel = ({
       (
         permissionError
       ) => {
-        /*
-         * Don't crash or disconnect
-         * the meeting because a
-         * moderation API failed.
-         */
         console.error(
-          "New participant permission error:",
+          "Apply new participant permissions error:",
           permissionError
         );
       }
     );
   }, [
     call,
-    remoteUserKey,
+    participantKey,
   ]);
 
   /* =====================================================
-     CHANGE SETTING
+     CHANGE CLASS PERMISSION
   ===================================================== */
 
   const changePermission =
     async (
       key:
-        keyof CohivaPermissions
+        | "studentMic"
+        | "studentCamera"
+        | "studentScreenShare"
+        | "studentWhiteboard"
     ) => {
       if (
         !call ||
@@ -321,7 +336,7 @@ const MeetingPermissionsPanel = ({
         return;
       }
 
-      const next:
+      const nextPermissions:
         CohivaPermissions = {
         ...permissions,
 
@@ -329,6 +344,12 @@ const MeetingPermissionsPanel = ({
           !permissions[
             key
           ],
+
+        /*
+         * Recording remains locked.
+         */
+        studentRecording:
+          false,
       };
 
       try {
@@ -341,7 +362,7 @@ const MeetingPermissionsPanel = ({
         );
 
         /* =============================================
-           SAVE COHIVA POLICY
+           SAVE COHIVA CLASS POLICY
         ============================================= */
 
         await call.update({
@@ -349,37 +370,28 @@ const MeetingPermissionsPanel = ({
             ...(custom ?? {}),
 
             cohiva_permissions:
-              next,
+              nextPermissions,
           },
         });
 
         /* =============================================
-           STREAM MEDIA PERMISSIONS
-
-           Whiteboard and recording
-           are Cohiva application
-           permissions, not these
-           dynamic Stream permissions.
+           APPLY REAL STREAM MEDIA PERMISSION
         ============================================= */
 
         if (
-          key ===
-            "studentMic" ||
-          key ===
-            "studentCamera" ||
-          key ===
-            "studentScreenShare"
+          key !==
+          "studentWhiteboard"
         ) {
           await applyStreamPermissions(
-            remoteUserIds,
-            next
+            studentIds,
+            nextPermissions
           );
         }
       } catch (
         permissionError
       ) {
         console.error(
-          "Cohiva permission update error:",
+          "Update Cohiva permissions error:",
           permissionError
         );
 
@@ -389,59 +401,6 @@ const MeetingPermissionsPanel = ({
       } finally {
         setSaving(
           false
-        );
-      }
-    };
-
-  /* =====================================================
-     MUTE EVERYONE
-  ===================================================== */
-
-  const muteEveryone =
-    async () => {
-      if (
-        !call ||
-        !call.isCreatedByMe ||
-        muting
-      ) {
-        return;
-      }
-
-      try {
-        setMuting(
-          true
-        );
-
-        setError(
-          ""
-        );
-
-        await call.muteOthers(
-          "audio"
-        );
-
-        window.setTimeout(
-          () => {
-            setMuting(
-              false
-            );
-          },
-          1200
-        );
-      } catch (
-        muteError
-      ) {
-        console.error(
-          "Mute class error:",
-          muteError
-        );
-
-        setMuting(
-          false
-        );
-
-        setError(
-          "Cohiva could not mute the class."
         );
       }
     };
@@ -462,7 +421,7 @@ const MeetingPermissionsPanel = ({
   ===================================================== */
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center overflow-hidden bg-black/55 p-3 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[230] flex items-center justify-center overflow-hidden bg-black/55 p-3 backdrop-blur-sm">
 
       {/* BACKDROP */}
 
@@ -477,9 +436,11 @@ const MeetingPermissionsPanel = ({
 
       {/* PANEL */}
 
-      <section className="relative z-10 flex max-h-[calc(100dvh-24px)] w-full max-w-[850px] flex-col overflow-hidden rounded-[28px] bg-[#FFF7EB] shadow-2xl">
+      <section className="relative z-10 flex max-h-[calc(100dvh-24px)] w-full max-w-[950px] flex-col overflow-hidden rounded-[28px] bg-[#FFF7EB] shadow-2xl">
 
-        {/* HEADER */}
+        {/* =================================================
+            HEADER
+        ================================================= */}
 
         <div className="flex shrink-0 items-center justify-between border-b border-[#403A35]/10 px-5 py-4">
 
@@ -490,182 +451,217 @@ const MeetingPermissionsPanel = ({
             </p>
 
             <h2 className="mt-1 text-xl font-black text-[#3D3732]">
-              Class Permissions
+              Meeting Settings
             </h2>
 
-          </div>
-
-          <div className="flex items-center gap-3">
-
-            <span className="rounded-full bg-[#A2AB73]/15 px-3 py-1.5 text-xs font-black text-[#737C4C]">
-              👥 {remoteUserIds.length}
-              {" "}
-              {remoteUserIds.length ===
-              1
-                ? "student"
-                : "students"}
-            </span>
-
-            <button
-              type="button"
-              onClick={
-                onClose
-              }
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-[#403A35]/10 text-xl font-bold text-[#403A35] transition hover:bg-[#CC3A63] hover:text-white"
-            >
-              ×
-            </button>
+            <p className="mt-1 text-xs font-semibold text-[#756E64]">
+              Control who can enter and what students can do.
+            </p>
 
           </div>
-
-        </div>
-
-        {/* PERMISSION GRID */}
-
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
-
-          <PermissionToggle
-            icon="🎙"
-            title="Microphone"
-            subtitle="Student audio"
-            enabled={
-              permissions.studentMic
-            }
-            disabled={
-              saving
-            }
-            onClick={() =>
-              changePermission(
-                "studentMic"
-              )
-            }
-          />
-
-          <PermissionToggle
-            icon="🎥"
-            title="Camera"
-            subtitle="Student video"
-            enabled={
-              permissions.studentCamera
-            }
-            disabled={
-              saving
-            }
-            onClick={() =>
-              changePermission(
-                "studentCamera"
-              )
-            }
-          />
-
-          <PermissionToggle
-            icon="🖥"
-            title="Screen Share"
-            subtitle="Present screens"
-            enabled={
-              permissions.studentScreenShare
-            }
-            disabled={
-              saving
-            }
-            onClick={() =>
-              changePermission(
-                "studentScreenShare"
-              )
-            }
-          />
-
-          {/* =============================================
-              RECORDING
-
-              Cohiva UI permission.
-          ============================================= */}
-
-          <PermissionToggle
-            icon="⏺"
-            title="Recording"
-            subtitle="Show record control"
-            enabled={
-              permissions.studentRecording
-            }
-            disabled={
-              saving
-            }
-            onClick={() =>
-              changePermission(
-                "studentRecording"
-              )
-            }
-          />
-
-          {/* WHITEBOARD */}
-
-          <PermissionToggle
-            icon="✏"
-            title="Whiteboard"
-            subtitle="Allow editing"
-            enabled={
-              permissions.studentWhiteboard
-            }
-            disabled={
-              saving
-            }
-            onClick={() =>
-              changePermission(
-                "studentWhiteboard"
-              )
-            }
-          />
-
-          {/* MUTE EVERYONE */}
 
           <button
             type="button"
+            aria-label="Close meeting settings"
             onClick={
-              muteEveryone
+              onClose
             }
-            disabled={
-              muting
-            }
-            className="flex min-h-[92px] items-center gap-3 rounded-[20px] bg-[#403A35] p-4 text-left transition hover:bg-[#302B27] disabled:opacity-60"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-[#403A35]/10 text-xl font-black text-[#403A35] transition hover:bg-[#CC3A63] hover:text-white"
           >
-
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#CC3A63]/20 text-xl">
-              🔇
-            </div>
-
-            <div>
-
-              <p className="font-black text-[#FFF7EB]">
-                {muting
-                  ? "Muted ✓"
-                  : "Mute Everyone"}
-              </p>
-
-              <p className="mt-1 text-[11px] text-[#FFF7EB]/55">
-                Mute all students
-              </p>
-
-            </div>
-
+            ×
           </button>
 
         </div>
 
-        {/* ERROR */}
+        {/* =================================================
+            CONTENT
+        ================================================= */}
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+
+          {/* ===============================================
+              MEETING ACCESS
+          =============================================== */}
+
+          <MeetingAccessSettings
+            callId={
+              callId
+            }
+          />
+
+          {/* ===============================================
+              CLASS PERMISSIONS
+          =============================================== */}
+
+          <div className="mt-4">
+
+            <div className="mb-3">
+
+              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-[#CC3A63]">
+                Student Permissions
+              </p>
+
+              <h3 className="mt-1 font-black text-[#3D3732]">
+                What can students use?
+              </h3>
+
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+
+              {/* MICROPHONE */}
+
+              <PermissionToggle
+                icon="🎙"
+                title="Microphones"
+                subtitle="Students can unmute themselves"
+                enabled={
+                  permissions.studentMic
+                }
+                disabled={
+                  saving
+                }
+                onClick={() =>
+                  void changePermission(
+                    "studentMic"
+                  )
+                }
+              />
+
+              {/* CAMERA */}
+
+              <PermissionToggle
+                icon="🎥"
+                title="Cameras"
+                subtitle="Students can turn video on"
+                enabled={
+                  permissions.studentCamera
+                }
+                disabled={
+                  saving
+                }
+                onClick={() =>
+                  void changePermission(
+                    "studentCamera"
+                  )
+                }
+              />
+
+              {/* SCREEN SHARE */}
+
+              <PermissionToggle
+                icon="🖥"
+                title="Screen sharing"
+                subtitle="Students can present their screen"
+                enabled={
+                  permissions.studentScreenShare
+                }
+                disabled={
+                  saving
+                }
+                onClick={() =>
+                  void changePermission(
+                    "studentScreenShare"
+                  )
+                }
+              />
+
+              {/* WHITEBOARD */}
+
+              <PermissionToggle
+                icon="✏"
+                title="Whiteboard"
+                subtitle="Students can edit the class board"
+                enabled={
+                  permissions.studentWhiteboard
+                }
+                disabled={
+                  saving
+                }
+                onClick={() =>
+                  void changePermission(
+                    "studentWhiteboard"
+                  )
+                }
+              />
+
+              {/* RECORDING */}
+
+              <div className="flex min-h-[108px] items-center gap-3 rounded-[20px] border border-[#CC3A63]/15 bg-[#CC3A63]/5 p-4">
+
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-xl">
+                  ⏺
+                </div>
+
+                <div className="min-w-0">
+
+                  <p className="font-black text-[#3D3732]">
+                    Recording
+                  </p>
+
+                  <p className="mt-1 text-[9px] font-black uppercase tracking-wider text-[#CC3A63]">
+                    Teacher only
+                  </p>
+
+                  <p className="mt-1 text-[10px] leading-4 text-[#756E64]">
+                    Students cannot start or stop Cohiva recordings.
+                  </p>
+
+                </div>
+
+              </div>
+
+              {/* INFO */}
+
+              <div className="flex min-h-[108px] items-center gap-3 rounded-[20px] bg-[#403A35] p-4">
+
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10 text-xl">
+                  🔐
+                </div>
+
+                <div>
+
+                  <p className="font-black text-[#FFF7EB]">
+                    Real blocking
+                  </p>
+
+                  <p className="mt-1 text-[10px] leading-4 text-[#FFF7EB]/60">
+                    Blocked media permissions cannot simply be turned back on by students.
+                  </p>
+
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+        {/* =================================================
+            ERROR
+        ================================================= */}
 
         {error && (
-          <div className="mx-4 mb-3 shrink-0 rounded-xl bg-[#CC3A63]/10 px-4 py-2 text-xs font-bold text-[#CC3A63]">
+          <div className="mx-4 mb-3 shrink-0 rounded-xl bg-[#CC3A63]/10 p-3 text-xs font-bold text-[#CC3A63]">
             {error}
           </div>
         )}
 
-        {/* FOOTER */}
+        {/* =================================================
+            FOOTER
+        ================================================= */}
 
         <div className="flex shrink-0 items-center justify-between border-t border-[#403A35]/10 bg-[#F9F0E0] px-5 py-3">
 
           <p className="text-[11px] font-semibold text-[#756E64]">
-            Changes apply immediately.
+            {studentIds.length}
+            {" "}
+            {studentIds.length ===
+            1
+              ? "student connected"
+              : "students connected"}
           </p>
 
           <button
@@ -689,15 +685,20 @@ const MeetingPermissionsPanel = ({
 export default MeetingPermissionsPanel;
 
 /* =========================================================
-   PERMISSION TILE
+   TOGGLE COMPONENT
 ========================================================= */
 
 type PermissionToggleProps = {
   icon: string;
+
   title: string;
+
   subtitle: string;
+
   enabled: boolean;
+
   disabled: boolean;
+
   onClick: () => void;
 };
 
@@ -712,20 +713,23 @@ const PermissionToggle = ({
   return (
     <button
       type="button"
-      onClick={
-        onClick
-      }
       disabled={
         disabled
       }
-      className={`flex min-h-[92px] items-center gap-3 rounded-[20px] border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
+      onClick={
+        onClick
+      }
+      aria-pressed={
+        enabled
+      }
+      className={`flex min-h-[108px] items-center gap-3 rounded-[20px] border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${
         enabled
           ? "border-[#A2AB73]/30 bg-[#A2AB73]/10"
-          : "border-[#403A35]/10 bg-white"
+          : "border-[#CC3A63]/20 bg-[#CC3A63]/5"
       }`}
     >
 
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F9F0E0] text-xl">
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-xl">
         {icon}
       </div>
 
@@ -735,7 +739,7 @@ const PermissionToggle = ({
           {title}
         </p>
 
-        <p className="mt-0.5 text-[10px] font-semibold text-[#756E64]">
+        <p className="mt-0.5 text-[10px] leading-4 text-[#756E64]">
           {subtitle}
         </p>
 
@@ -757,7 +761,7 @@ const PermissionToggle = ({
         className={`relative h-6 w-11 shrink-0 rounded-full transition ${
           enabled
             ? "bg-[#A2AB73]"
-            : "bg-[#403A35]/15"
+            : "bg-[#CC3A63]/25"
         }`}
       >
 
