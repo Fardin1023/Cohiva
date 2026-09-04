@@ -16,32 +16,47 @@ import StreamVideoProvider from "@/components/providers/StreamVideoProvider";
 import "@stream-io/video-react-sdk/dist/css/styles.css";
 import "./globals.css";
 
+/* =========================================================
+   FONTS
+========================================================= */
+
 const playfairDisplayHeading =
   Playfair_Display({
     subsets: ["latin"],
     variable: "--font-heading",
   });
 
-const notoSans = Noto_Sans({
-  subsets: ["latin"],
-  variable: "--font-sans",
-});
+const notoSans =
+  Noto_Sans({
+    subsets: ["latin"],
+    variable: "--font-sans",
+  });
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+const geistSans =
+  Geist({
+    variable: "--font-geist-sans",
+    subsets: ["latin"],
+  });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const geistMono =
+  Geist_Mono({
+    variable: "--font-geist-mono",
+    subsets: ["latin"],
+  });
+
+/* =========================================================
+   METADATA
+========================================================= */
 
 export const metadata: Metadata = {
   title: "Cohiva",
   description:
     "Meet, connect, and collaborate with Cohiva.",
 };
+
+/* =========================================================
+   ROOT LAYOUT
+========================================================= */
 
 export default function RootLayout({
   children,

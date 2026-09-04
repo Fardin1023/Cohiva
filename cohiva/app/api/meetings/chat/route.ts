@@ -6,11 +6,132 @@ import {
   StreamClient,
 } from "@stream-io/node-sdk";
 
+import {
+  randomUUID,
+} from "node:crypto";
+
 import connectMongoDB from "@/lib/mongodb";
+
 import MeetingChatMessage from "@/models/MeetingChatMessage";
+
+/* =========================================================
+   CONFIG
+========================================================= */
+
+const CALL_TYPE =
+  "development";
 
 const CHAT_EVENT =
   "cohiva-chat";
+
+const MAX_MESSAGE_LENGTH =
+  1000;
+
+const MAX_HISTORY =
+  100;
+
+/* =========================================================
+   STREAM CLIENT
+========================================================= */
+
+const getStreamClient =
+  () => {
+    const apiKey =
+      process.env
+        .NEXT_PUBLIC_STREAM_API_KEY;
+
+    const apiSecret =
+      process.env
+        .STREAM_API_SECRET;
+
+    if (
+      !apiKey ||
+      !apiSecret
+    ) {
+      throw new Error(
+        "Stream server configuration is missing."
+      );
+    }
+
+    return new StreamClient(
+      apiKey,
+      apiSecret
+    );
+  };
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+const cleanString = (
+  value: unknown,
+  maxLength: number
+) => {
+  if (
+    typeof value !==
+    "string"
+  ) {
+    return "";
+  }
+
+  return value
+    .trim()
+    .slice(
+      0,
+      maxLength
+    );
+};
+
+const isDuplicateKeyError = (
+  error: unknown
+) => {
+  if (
+    !error ||
+    typeof error !==
+      "object"
+  ) {
+    return false;
+  }
+
+  return (
+    "code" in error &&
+    (
+      error as {
+        code?: number;
+      }
+    ).code ===
+      11000
+  );
+};
+
+const serializeMessage = (
+  message: any
+) => {
+  return {
+    messageId:
+      message.messageId ||
+      message._id?.toString(),
+
+    senderId:
+      message.senderId,
+
+    senderName:
+      message.senderName ||
+      "Participant",
+
+    senderImage:
+      message.senderImage ||
+      "",
+
+    text:
+      message.text,
+
+    createdAt:
+      new Date(
+        message.createdAt
+      ).toISOString(),
+  };
+};
 
 /* =========================================================
    GET CHAT HISTORY
@@ -22,12 +143,14 @@ export async function GET(
   try {
     const {
       userId,
-    } = await auth();
+    } =
+      await auth();
 
     if (!userId) {
       return Response.json(
         {
-          error: "Unauthorized.",
+          error:
+            "Unauthorized.",
         },
         {
           status: 401,
@@ -43,11 +166,12 @@ export async function GET(
       );
 
     const callId =
-      searchParams
-        .get(
+      cleanString(
+        searchParams.get(
           "callId"
-        )
-        ?.trim();
+        ),
+        200
+      );
 
     if (!callId) {
       return Response.json(
@@ -63,7 +187,12 @@ export async function GET(
 
     await connectMongoDB();
 
-    const messages =
+    /*
+     * Read newest 100 for efficiency,
+     * then reverse so UI receives
+     * oldest -> newest.
+     */
+    const storedMessages =
       await MeetingChatMessage
         .find({
           callId,
@@ -71,49 +200,33 @@ export async function GET(
         .sort({
           createdAt: -1,
         })
-        .limit(100)
+        .limit(
+          MAX_HISTORY
+        )
         .lean();
 
+    const messages =
+      storedMessages
+        .reverse()
+        .map(
+          serializeMessage
+        );
+
     return Response.json({
-      messages:
-        messages
-          .reverse()
-          .map(
-            (
-              message
-            ) => ({
-              id:
-                String(
-                  message._id
-                ),
+      success: true,
 
-              senderId:
-                message.senderId,
-
-              senderName:
-                message.senderName,
-
-              senderImage:
-                message.senderImage,
-
-              text:
-                message.text,
-
-              sentAt:
-                message.createdAt,
-            })
-          ),
+      messages,
     });
   } catch (error) {
     console.error(
-      "Load meeting chat error:",
+      "Cohiva chat GET error:",
       error
     );
 
     return Response.json(
       {
         error:
-          "Unable to load meeting chat.",
+          "Unable to load class chat.",
       },
       {
         status: 500,
@@ -123,21 +236,27 @@ export async function GET(
 }
 
 /* =========================================================
-   SEND MESSAGE
+   POST MESSAGE
 ========================================================= */
 
 export async function POST(
   request: Request
 ) {
   try {
+    /* =====================================================
+       AUTH
+    ===================================================== */
+
     const {
       userId,
-    } = await auth();
+    } =
+      await auth();
 
     if (!userId) {
       return Response.json(
         {
-          error: "Unauthorized.",
+          error:
+            "Unauthorized.",
         },
         {
           status: 401,
@@ -145,42 +264,44 @@ export async function POST(
       );
     }
 
+    /* =====================================================
+       BODY
+    ===================================================== */
+
     const body =
       await request.json();
 
     const callId =
-      typeof body.callId ===
-      "string"
-        ? body.callId.trim()
-        : "";
+      cleanString(
+        body.callId,
+        200
+      );
 
     const text =
-      typeof body.text ===
-      "string"
-        ? body.text.trim()
-        : "";
+      cleanString(
+        body.text,
+        MAX_MESSAGE_LENGTH
+      );
 
     const senderName =
-      typeof body.senderName ===
-      "string"
-        ? body.senderName
-            .trim()
-            .slice(
-              0,
-              120
-            )
-        : "Participant";
+      cleanString(
+        body.senderName,
+        120
+      ) ||
+      "Participant";
 
     const senderImage =
-      typeof body.senderImage ===
-      "string"
-        ? body.senderImage
-            .trim()
-            .slice(
-              0,
-              1000
-            )
-        : "";
+      cleanString(
+        body.senderImage,
+        1000
+      );
+
+    const messageId =
+      cleanString(
+        body.messageId,
+        150
+      ) ||
+      randomUUID();
 
     if (!callId) {
       return Response.json(
@@ -206,106 +327,140 @@ export async function POST(
       );
     }
 
-    if (
-      text.length >
-      1500
-    ) {
-      return Response.json(
-        {
-          error:
-            "Message is too long.",
-        },
-        {
-          status: 413,
-        }
-      );
-    }
-
     await connectMongoDB();
 
-    const savedMessage =
-      await MeetingChatMessage.create({
-        callId,
-        senderId:
-          userId,
-        senderName,
-        senderImage,
-        text,
-      });
+    /* =====================================================
+       SAVE MESSAGE
+    ===================================================== */
 
-    const message = {
-      id:
-        String(
-          savedMessage._id
-        ),
+    let storedMessage:
+      any;
 
-      senderId:
-        userId,
+    let newlyCreated =
+      false;
 
-      senderName,
+    try {
+      storedMessage =
+        await MeetingChatMessage.create({
+          callId,
 
-      senderImage,
+          messageId,
 
-      text,
+          /*
+           * IMPORTANT:
+           *
+           * senderId comes from Clerk,
+           * never from the browser.
+           */
+          senderId:
+            userId,
 
-      sentAt:
-        savedMessage.createdAt.toISOString(),
-    };
+          senderName,
 
-    const apiKey =
-      process.env
-        .NEXT_PUBLIC_STREAM_API_KEY;
+          senderImage,
 
-    const apiSecret =
-      process.env
-        .STREAM_API_SECRET;
+          text,
 
-    if (
-      !apiKey ||
-      !apiSecret
+          createdAt:
+            new Date(),
+        });
+
+      newlyCreated =
+        true;
+    } catch (
+      databaseError
     ) {
-      return Response.json(
-        {
-          error:
-            "Stream configuration is missing.",
-        },
-        {
-          status: 500,
-        }
-      );
+      /*
+       * A retry with the same messageId
+       * should not create a duplicate.
+       */
+      if (
+        !isDuplicateKeyError(
+          databaseError
+        )
+      ) {
+        throw databaseError;
+      }
+
+      storedMessage =
+        await MeetingChatMessage.findOne({
+          callId,
+
+          messageId,
+        });
+
+      if (
+        !storedMessage
+      ) {
+        throw databaseError;
+      }
     }
 
-    const streamClient =
-      new StreamClient(
-        apiKey,
-        apiSecret
+    const message =
+      serializeMessage(
+        storedMessage
       );
 
-    const call =
-      streamClient.video.call(
-        "development",
-        callId
-      );
+    /* =====================================================
+       REALTIME BROADCAST
 
-    await call.sendCallEvent({
-      custom: {
-        type:
-          CHAT_EVENT,
+       Only broadcast a newly-created message.
 
-        ...message,
-      },
+       If Stream has a temporary realtime failure,
+       the message stays safely stored in MongoDB.
+       The client also has lightweight history sync.
+    ===================================================== */
 
-      user_id:
-        userId,
-    });
+    let realtime =
+      true;
+
+    if (
+      newlyCreated
+    ) {
+      try {
+        const streamClient =
+          getStreamClient();
+
+        const call =
+          streamClient.video.call(
+            CALL_TYPE,
+            callId
+          );
+
+        await call.sendCallEvent({
+          custom: {
+            type:
+              CHAT_EVENT,
+
+            ...message,
+          },
+
+          user_id:
+            userId,
+        });
+      } catch (
+        realtimeError
+      ) {
+        realtime =
+          false;
+
+        console.error(
+          "Cohiva chat realtime broadcast error:",
+          realtimeError
+        );
+      }
+    }
 
     return Response.json({
       success: true,
+
+      realtime,
+
       message,
     });
   } catch (error) {
     console.error(
-      "Send meeting chat error:",
+      "Cohiva chat POST error:",
       error
     );
 

@@ -10,71 +10,86 @@ import {
    CONFIG
 ========================================================= */
 
+const CALL_TYPE =
+  "development";
+
 const WHITEBOARD_EVENT =
   "cohiva-whiteboard";
 
-const MAX_EVENTS_PER_REQUEST =
+const MAX_EVENTS =
   256;
 
-const MAX_CUSTOM_EVENT_BYTES =
+const MAX_EVENT_BYTES =
   4500;
 
 /* =========================================================
    TYPES
 ========================================================= */
 
-type WhiteboardEventPayload =
+type WhiteboardEvent =
   Record<
     string,
     unknown
   >;
 
-type WhiteboardRelayRequest = {
-  callId?: string;
-
-  events?:
-    WhiteboardEventPayload[];
+type WhiteboardPermissions = {
+  studentWhiteboard?: boolean;
 };
 
 /* =========================================================
-   VALID ACTIONS
+   STREAM
 ========================================================= */
 
-const validActions =
-  new Set([
-    "sync-request",
-    "elements",
-    "empty-snapshot",
-    "clear",
-  ]);
+const getStreamClient =
+  () => {
+    const apiKey =
+      process.env
+        .NEXT_PUBLIC_STREAM_API_KEY;
+
+    const apiSecret =
+      process.env
+        .STREAM_API_SECRET;
+
+    if (
+      !apiKey ||
+      !apiSecret
+    ) {
+      throw new Error(
+        "Stream configuration is missing."
+      );
+    }
+
+    return new StreamClient(
+      apiKey,
+      apiSecret
+    );
+  };
 
 /* =========================================================
-   SIZE
+   BYTE SIZE
 ========================================================= */
 
-const getByteLength = (
-  value: unknown
-) => {
-  return new TextEncoder()
-    .encode(
-      JSON.stringify(
-        value
+const getBytes =
+  (
+    value:
+      unknown
+  ) => {
+    return new TextEncoder()
+      .encode(
+        JSON.stringify(
+          value
+        )
       )
-    )
-    .length;
-};
+      .length;
+  };
 
 /* =========================================================
    POST
-
-   THIS POST EXPORT IS IMPORTANT.
-
-   Your current 405 means Next.js
-   isn't seeing a valid POST handler.
 ========================================================= */
 
 export async function POST(
-  request: Request
+  request:
+    Request
 ) {
   try {
     /* =====================================================
@@ -103,14 +118,17 @@ export async function POST(
     ===================================================== */
 
     const body =
-      (await request.json()) as
-        WhiteboardRelayRequest;
+      await request.json();
 
     const callId =
-      body.callId?.trim();
+      typeof body.callId ===
+      "string"
+        ? body.callId.trim()
+        : "";
 
     const events =
-      body.events;
+      body.events as
+        WhiteboardEvent[];
 
     if (!callId) {
       return Response.json(
@@ -144,7 +162,7 @@ export async function POST(
 
     if (
       events.length >
-      MAX_EVENTS_PER_REQUEST
+      MAX_EVENTS
     ) {
       return Response.json(
         {
@@ -158,34 +176,52 @@ export async function POST(
     }
 
     /* =====================================================
-       ENVIRONMENT
+       LOAD CALL
     ===================================================== */
 
-    const apiKey =
-      process.env
-        .NEXT_PUBLIC_STREAM_API_KEY;
+    const streamClient =
+      getStreamClient();
 
-    const apiSecret =
-      process.env
-        .STREAM_API_SECRET;
-
-    if (
-      !apiKey ||
-      !apiSecret
-    ) {
-      return Response.json(
-        {
-          error:
-            "Stream configuration is missing.",
-        },
-        {
-          status: 500,
-        }
+    const call =
+      streamClient.video.call(
+        CALL_TYPE,
+        callId
       );
-    }
+
+    const callResponse =
+      await call.get();
+
+    const creatorId =
+      callResponse.call
+        .created_by?.id;
+
+    const isTeacher =
+      creatorId ===
+      userId;
+
+    const custom =
+      (
+        callResponse.call
+          .custom ??
+        {}
+      ) as Record<
+        string,
+        unknown
+      >;
+
+    const permissions =
+      custom
+        .cohiva_permissions as
+        | WhiteboardPermissions
+        | undefined;
+
+    const studentCanDraw =
+      permissions
+        ?.studentWhiteboard ===
+      true;
 
     /* =====================================================
-       VALIDATE EVENTS
+       VALIDATE EACH EVENT
     ===================================================== */
 
     const safeEvents:
@@ -196,7 +232,8 @@ export async function POST(
       [];
 
     for (
-      const event of events
+      const event of
+        events
     ) {
       if (
         !event ||
@@ -222,10 +259,7 @@ export async function POST(
 
       if (
         typeof action !==
-          "string" ||
-        !validActions.has(
-          action
-        )
+        "string"
       ) {
         return Response.json(
           {
@@ -238,7 +272,120 @@ export async function POST(
         );
       }
 
-      const custom = {
+      /* ===============================================
+         SYNC REQUEST
+
+         Everyone may request the current
+         teacher board.
+      =============================================== */
+
+      if (
+        action ===
+        "sync-request"
+      ) {
+        // Allowed.
+      }
+
+      /* ===============================================
+         ELEMENT CHANGES
+
+         Teacher = always allowed.
+
+         Student = only when teacher has
+         enabled Whiteboard permission.
+      =============================================== */
+
+      else if (
+        action ===
+        "elements"
+      ) {
+        if (
+          !isTeacher &&
+          !studentCanDraw
+        ) {
+          return Response.json(
+            {
+              error:
+                "The teacher has disabled student whiteboard editing.",
+            },
+            {
+              status: 403,
+            }
+          );
+        }
+      }
+
+      /* ===============================================
+         CLEAR BOARD
+
+         Teacher only.
+      =============================================== */
+
+      else if (
+        action ===
+        "clear"
+      ) {
+        if (
+          !isTeacher
+        ) {
+          return Response.json(
+            {
+              error:
+                "Only the teacher can clear the whiteboard.",
+            },
+            {
+              status: 403,
+            }
+          );
+        }
+      }
+
+      /* ===============================================
+         EMPTY SNAPSHOT
+
+         Teacher only.
+      =============================================== */
+
+      else if (
+        action ===
+        "empty-snapshot"
+      ) {
+        if (
+          !isTeacher
+        ) {
+          return Response.json(
+            {
+              error:
+                "Only the teacher can publish the board snapshot.",
+            },
+            {
+              status: 403,
+            }
+          );
+        }
+      }
+
+      /* ===============================================
+         EVERYTHING ELSE
+      =============================================== */
+
+      else {
+        return Response.json(
+          {
+            error:
+              "Unsupported whiteboard action.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      /* ===============================================
+         SERVER EVENT
+      =============================================== */
+
+      const customEvent = {
         ...event,
 
         type:
@@ -249,10 +396,10 @@ export async function POST(
       };
 
       if (
-        getByteLength(
-          custom
+        getBytes(
+          customEvent
         ) >
-        MAX_CUSTOM_EVENT_BYTES
+        MAX_EVENT_BYTES
       ) {
         return Response.json(
           {
@@ -266,58 +413,42 @@ export async function POST(
       }
 
       safeEvents.push(
-        custom
+        customEvent
       );
     }
 
     /* =====================================================
-       STREAM SERVER
-    ===================================================== */
+       RELAY
 
-    const streamClient =
-      new StreamClient(
-        apiKey,
-        apiSecret
-      );
-
-    const call =
-      streamClient.video.call(
-        "development",
-        callId
-      );
-
-    /* =====================================================
-       RELAY EVENTS
-
-       Stream server custom events are
-       delivered to users watching
-       the call.
+       Small groups avoid firing hundreds
+       of calls simultaneously.
     ===================================================== */
 
     const CONCURRENCY =
       4;
 
     for (
-      let start = 0;
-      start <
+      let index = 0;
+      index <
       safeEvents.length;
-      start +=
+      index +=
         CONCURRENCY
     ) {
       const group =
         safeEvents.slice(
-          start,
-          start +
+          index,
+          index +
             CONCURRENCY
         );
 
       await Promise.all(
         group.map(
           (
-            custom
+            customEvent
           ) =>
             call.sendCallEvent({
-              custom,
+              custom:
+                customEvent,
 
               user_id:
                 userId,
@@ -331,10 +462,13 @@ export async function POST(
 
       relayed:
         safeEvents.length,
+
+      studentWhiteboard:
+        studentCanDraw,
     });
   } catch (error) {
     console.error(
-      "Cohiva whiteboard relay error:",
+      "Cohiva whiteboard event error:",
       error
     );
 

@@ -6,10 +6,21 @@ import {
   StreamClient,
 } from "@stream-io/node-sdk";
 
+import {
+  randomUUID,
+} from "node:crypto";
+
+/* =========================================================
+   CONFIG
+========================================================= */
+
+const CALL_TYPE =
+  "development";
+
 const CLASSROOM_EVENT =
   "cohiva-classroom";
 
-const allowedReactions =
+const ALLOWED_REACTIONS =
   new Set([
     "👍",
     "👏",
@@ -18,10 +29,70 @@ const allowedReactions =
     "🎉",
   ]);
 
+/* =========================================================
+   STREAM CLIENT
+========================================================= */
+
+const getStreamClient =
+  () => {
+    const apiKey =
+      process.env
+        .NEXT_PUBLIC_STREAM_API_KEY;
+
+    const apiSecret =
+      process.env
+        .STREAM_API_SECRET;
+
+    if (
+      !apiKey ||
+      !apiSecret
+    ) {
+      throw new Error(
+        "Stream server configuration is missing."
+      );
+    }
+
+    return new StreamClient(
+      apiKey,
+      apiSecret
+    );
+  };
+
+/* =========================================================
+   CLEAN STRING
+========================================================= */
+
+const cleanString = (
+  value: unknown,
+  maxLength: number
+) => {
+  if (
+    typeof value !==
+    "string"
+  ) {
+    return "";
+  }
+
+  return value
+    .trim()
+    .slice(
+      0,
+      maxLength
+    );
+};
+
+/* =========================================================
+   POST
+========================================================= */
+
 export async function POST(
   request: Request
 ) {
   try {
+    /* =====================================================
+       AUTH
+    ===================================================== */
+
     const {
       userId,
     } =
@@ -39,14 +110,31 @@ export async function POST(
       );
     }
 
+    /* =====================================================
+       BODY
+    ===================================================== */
+
     const body =
       await request.json();
 
     const callId =
-      typeof body.callId ===
-      "string"
-        ? body.callId.trim()
-        : "";
+      cleanString(
+        body.callId,
+        200
+      );
+
+    const senderName =
+      cleanString(
+        body.senderName,
+        120
+      ) ||
+      "Participant";
+
+    const senderImage =
+      cleanString(
+        body.senderImage,
+        1000
+      );
 
     const action =
       body.action;
@@ -72,7 +160,7 @@ export async function POST(
       return Response.json(
         {
           error:
-            "Invalid classroom event.",
+            "Invalid classroom action.",
         },
         {
           status: 400,
@@ -80,27 +168,9 @@ export async function POST(
       );
     }
 
-    const senderName =
-      typeof body.senderName ===
-      "string"
-        ? body.senderName
-            .trim()
-            .slice(
-              0,
-              120
-            )
-        : "Participant";
-
-    const senderImage =
-      typeof body.senderImage ===
-      "string"
-        ? body.senderImage
-            .trim()
-            .slice(
-              0,
-              1000
-            )
-        : "";
+    /* =====================================================
+       BUILD EVENT
+    ===================================================== */
 
     const custom:
       Record<
@@ -120,37 +190,63 @@ export async function POST(
       senderImage,
 
       eventId:
-        crypto.randomUUID(),
+        randomUUID(),
 
       createdAt:
         new Date()
           .toISOString(),
     };
 
+    /* =====================================================
+       HAND
+    ===================================================== */
+
     if (
       action ===
       "hand"
     ) {
+      if (
+        typeof body.raised !==
+        "boolean"
+      ) {
+        return Response.json(
+          {
+            error:
+              "Raised-hand status is required.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
       custom.raised =
-        body.raised ===
-        true;
+        body.raised;
     }
+
+    /* =====================================================
+       REACTION
+    ===================================================== */
 
     if (
       action ===
       "reaction"
     ) {
+      const emoji =
+        cleanString(
+          body.emoji,
+          10
+        );
+
       if (
-        typeof body.emoji !==
-          "string" ||
-        !allowedReactions.has(
-          body.emoji
+        !ALLOWED_REACTIONS.has(
+          emoji
         )
       ) {
         return Response.json(
           {
             error:
-              "Invalid reaction.",
+              "Unsupported reaction.",
           },
           {
             status: 400,
@@ -159,41 +255,19 @@ export async function POST(
       }
 
       custom.emoji =
-        body.emoji;
+        emoji;
     }
 
-    const apiKey =
-      process.env
-        .NEXT_PUBLIC_STREAM_API_KEY;
+    /* =====================================================
+       RELAY THROUGH STREAM
+    ===================================================== */
 
-    const apiSecret =
-      process.env
-        .STREAM_API_SECRET;
-
-    if (
-      !apiKey ||
-      !apiSecret
-    ) {
-      return Response.json(
-        {
-          error:
-            "Stream configuration is missing.",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    const client =
-      new StreamClient(
-        apiKey,
-        apiSecret
-      );
+    const streamClient =
+      getStreamClient();
 
     const call =
-      client.video.call(
-        "development",
+      streamClient.video.call(
+        CALL_TYPE,
         callId
       );
 
@@ -206,12 +280,13 @@ export async function POST(
 
     return Response.json({
       success: true,
+
       event:
         custom,
     });
   } catch (error) {
     console.error(
-      "Classroom event error:",
+      "Cohiva classroom event error:",
       error
     );
 

@@ -4,8 +4,44 @@ import {
   models,
 } from "mongoose";
 
+type AttendanceSession = {
+  joinedAt: Date;
+
+  leftAt?: Date | null;
+
+  durationSeconds: number;
+};
+
+export type MeetingAttendanceDocument = {
+  callId: string;
+
+  userId: string;
+
+  name: string;
+
+  image: string;
+
+  firstJoinedAt: Date;
+
+  lastJoinedAt: Date;
+
+  lastLeftAt?: Date | null;
+
+  activeSessionStartedAt?: Date | null;
+
+  lastHeartbeatAt?: Date | null;
+
+  totalSeconds: number;
+
+  joinCount: number;
+
+  isPresent: boolean;
+
+  sessions: AttendanceSession[];
+};
+
 const AttendanceSessionSchema =
-  new Schema(
+  new Schema<AttendanceSession>(
     {
       joinedAt: {
         type: Date,
@@ -20,6 +56,7 @@ const AttendanceSessionSchema =
       durationSeconds: {
         type: Number,
         default: 0,
+        min: 0,
       },
     },
     {
@@ -28,28 +65,31 @@ const AttendanceSessionSchema =
   );
 
 const MeetingAttendanceSchema =
-  new Schema(
+  new Schema<MeetingAttendanceDocument>(
     {
       callId: {
         type: String,
         required: true,
-        index: true,
+        trim: true,
       },
 
       userId: {
         type: String,
         required: true,
-        index: true,
+        trim: true,
       },
 
       name: {
         type: String,
-        default: "Participant",
+        required: true,
+        trim: true,
+        maxlength: 120,
       },
 
       image: {
         type: String,
         default: "",
+        maxlength: 1000,
       },
 
       firstJoinedAt: {
@@ -67,9 +107,31 @@ const MeetingAttendanceSchema =
         default: null,
       },
 
+      activeSessionStartedAt: {
+        type: Date,
+        default: null,
+      },
+
+      lastHeartbeatAt: {
+        type: Date,
+        default: null,
+      },
+
       totalSeconds: {
         type: Number,
         default: 0,
+        min: 0,
+      },
+
+      joinCount: {
+        type: Number,
+        default: 1,
+        min: 1,
+      },
+
+      isPresent: {
+        type: Boolean,
+        default: true,
       },
 
       sessions: {
@@ -82,6 +144,7 @@ const MeetingAttendanceSchema =
     },
     {
       timestamps: true,
+      versionKey: false,
     }
   );
 
@@ -95,9 +158,14 @@ MeetingAttendanceSchema.index(
   }
 );
 
+MeetingAttendanceSchema.index({
+  callId: 1,
+  firstJoinedAt: 1,
+});
+
 const MeetingAttendance =
   models.MeetingAttendance ||
-  model(
+  model<MeetingAttendanceDocument>(
     "MeetingAttendance",
     MeetingAttendanceSchema
   );

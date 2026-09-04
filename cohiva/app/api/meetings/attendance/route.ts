@@ -7,10 +7,185 @@ import {
 } from "@stream-io/node-sdk";
 
 import connectMongoDB from "@/lib/mongodb";
+
 import MeetingAttendance from "@/models/MeetingAttendance";
 
+const CALL_TYPE =
+  "development";
+
+/*
+ * Client sends heartbeat every 20 seconds.
+ *
+ * If we haven't heard from the participant
+ * for 55 seconds, consider the session stale.
+ */
+const HEARTBEAT_TIMEOUT_MS =
+  55_000;
+
+const cleanString = (
+  value: unknown,
+  maxLength: number
+) => {
+  if (
+    typeof value !==
+    "string"
+  ) {
+    return "";
+  }
+
+  return value
+    .trim()
+    .slice(
+      0,
+      maxLength
+    );
+};
+
+const secondsBetween = (
+  start: Date,
+  end: Date
+) => {
+  return Math.max(
+    0,
+    Math.floor(
+      (
+        end.getTime() -
+        start.getTime()
+      ) /
+        1000
+    )
+  );
+};
+
 /* =========================================================
-   POST JOIN / LEAVE
+   FINALIZE CURRENT SESSION
+========================================================= */
+
+const finalizeCurrentSession = (
+  document: any,
+  endTime: Date
+) => {
+  const startedAt =
+    document.activeSessionStartedAt
+      ? new Date(
+          document.activeSessionStartedAt
+        )
+      : null;
+
+  if (
+    !startedAt
+  ) {
+    document.isPresent =
+      false;
+
+    document.lastLeftAt =
+      endTime;
+
+    document.activeSessionStartedAt =
+      null;
+
+    return;
+  }
+
+  const duration =
+    secondsBetween(
+      startedAt,
+      endTime
+    );
+
+  document.totalSeconds =
+    Math.max(
+      0,
+      Number(
+        document.totalSeconds ||
+          0
+      )
+    ) +
+    duration;
+
+  const sessions =
+    document.sessions ||
+    [];
+
+  const lastSession =
+    sessions[
+      sessions.length - 1
+    ];
+
+  if (
+    lastSession &&
+    !lastSession.leftAt
+  ) {
+    lastSession.leftAt =
+      endTime;
+
+    lastSession.durationSeconds =
+      duration;
+  }
+
+  document.isPresent =
+    false;
+
+  document.lastLeftAt =
+    endTime;
+
+  document.activeSessionStartedAt =
+    null;
+};
+
+/* =========================================================
+   VERIFY TEACHER
+========================================================= */
+
+const verifyTeacher =
+  async (
+    callId: string,
+    userId: string
+  ) => {
+    const apiKey =
+      process.env
+        .NEXT_PUBLIC_STREAM_API_KEY;
+
+    const secret =
+      process.env
+        .STREAM_API_SECRET;
+
+    if (
+      !apiKey ||
+      !secret
+    ) {
+      throw new Error(
+        "Stream configuration missing."
+      );
+    }
+
+    const client =
+      new StreamClient(
+        apiKey,
+        secret,
+        {
+          timeout: 10000,
+        }
+      );
+
+    const call =
+      client.video.call(
+        CALL_TYPE,
+        callId
+      );
+
+    const response =
+      await call.get();
+
+    return (
+      response.call
+        .created_by?.id ===
+      userId
+    );
+  };
+
+/* =========================================================
+   POST
 ========================================================= */
 
 export async function POST(
@@ -38,35 +213,29 @@ export async function POST(
       await request.json();
 
     const callId =
-      typeof body.callId ===
-      "string"
-        ? body.callId.trim()
-        : "";
+      cleanString(
+        body.callId,
+        200
+      );
 
     const action =
-      body.action;
+      cleanString(
+        body.action,
+        30
+      );
 
     const name =
-      typeof body.name ===
-      "string"
-        ? body.name
-            .trim()
-            .slice(
-              0,
-              120
-            )
-        : "Participant";
+      cleanString(
+        body.name,
+        120
+      ) ||
+      "Participant";
 
     const image =
-      typeof body.image ===
-      "string"
-        ? body.image
-            .trim()
-            .slice(
-              0,
-              1000
-            )
-        : "";
+      cleanString(
+        body.image,
+        1000
+      );
 
     if (!callId) {
       return Response.json(
@@ -81,10 +250,9 @@ export async function POST(
     }
 
     if (
-      action !==
-        "join" &&
-      action !==
-        "leave"
+      action !== "join" &&
+      action !== "leave" &&
+      action !== "heartbeat"
     ) {
       return Response.json(
         {
@@ -109,92 +277,274 @@ export async function POST(
       });
 
     /* =====================================================
-       JOIN
+       FIRST JOIN
+    ===================================================== */
+
+    if (
+      action === "join" &&
+      !attendance
+    ) {
+      attendance =
+        await MeetingAttendance.create({
+          callId,
+
+          userId,
+
+          name,
+
+          image,
+
+          firstJoinedAt:
+            now,
+
+          lastJoinedAt:
+            now,
+
+          lastLeftAt:
+            null,
+
+          activeSessionStartedAt:
+            now,
+
+          lastHeartbeatAt:
+            now,
+
+          totalSeconds:
+            0,
+
+          joinCount:
+            1,
+
+          isPresent:
+            true,
+
+          sessions: [
+            {
+              joinedAt:
+                now,
+
+              leftAt:
+                null,
+
+              durationSeconds:
+                0,
+            },
+          ],
+        });
+
+      return Response.json({
+        success: true,
+
+        status:
+          "joined",
+      });
+    }
+
+    /* =====================================================
+       HEARTBEAT WITHOUT EXISTING RECORD
+
+       Treat as join recovery.
+    ===================================================== */
+
+    if (
+      action ===
+        "heartbeat" &&
+      !attendance
+    ) {
+      attendance =
+        await MeetingAttendance.create({
+          callId,
+
+          userId,
+
+          name,
+
+          image,
+
+          firstJoinedAt:
+            now,
+
+          lastJoinedAt:
+            now,
+
+          activeSessionStartedAt:
+            now,
+
+          lastHeartbeatAt:
+            now,
+
+          totalSeconds:
+            0,
+
+          joinCount:
+            1,
+
+          isPresent:
+            true,
+
+          sessions: [
+            {
+              joinedAt:
+                now,
+
+              leftAt:
+                null,
+
+              durationSeconds:
+                0,
+            },
+          ],
+        });
+
+      return Response.json({
+        success: true,
+      });
+    }
+
+    if (
+      !attendance
+    ) {
+      return Response.json({
+        success: true,
+      });
+    }
+
+    /* =====================================================
+       UPDATE PROFILE DATA
+    ===================================================== */
+
+    attendance.name =
+      name ||
+      attendance.name;
+
+    if (image) {
+      attendance.image =
+        image;
+    }
+
+    /* =====================================================
+       JOIN / REJOIN
     ===================================================== */
 
     if (
       action ===
       "join"
     ) {
-      if (!attendance) {
-        attendance =
-          await MeetingAttendance.create({
-            callId,
+      /*
+       * If we still think the participant
+       * is present, check whether that old
+       * session actually went stale.
+       */
+      if (
+        attendance.isPresent
+      ) {
+        const heartbeat =
+          attendance.lastHeartbeatAt
+            ? new Date(
+                attendance.lastHeartbeatAt
+              )
+            : null;
 
-            userId,
-
-            name,
-
-            image,
-
-            firstJoinedAt:
-              now,
-
-            lastJoinedAt:
-              now,
-
-            totalSeconds:
-              0,
-
-            sessions: [
-              {
-                joinedAt:
-                  now,
-
-                leftAt:
-                  null,
-
-                durationSeconds:
-                  0,
-              },
-            ],
-          });
-      } else {
-        attendance.name =
-          name;
-
-        attendance.image =
-          image;
-
-        const lastSession =
-          attendance.sessions[
-            attendance.sessions.length -
-              1
-          ];
+        const stale =
+          !heartbeat ||
+          now.getTime() -
+            heartbeat.getTime() >
+            HEARTBEAT_TIMEOUT_MS;
 
         /*
-         * React development can mount twice.
-         * Don't create duplicate active sessions.
+         * Normal duplicate join from React
+         * or refresh initialization.
          */
         if (
-          !lastSession ||
-          lastSession.leftAt
+          !stale
         ) {
-          attendance.sessions.push({
-            joinedAt:
-              now,
-
-            leftAt:
-              null,
-
-            durationSeconds:
-              0,
-          });
-
-          attendance.lastJoinedAt =
+          attendance.lastHeartbeatAt =
             now;
 
-          attendance.lastLeftAt =
-            null;
-
           await attendance.save();
+
+          return Response.json({
+            success: true,
+
+            status:
+              "already-present",
+          });
         }
+
+        /*
+         * Previous browser vanished without
+         * sending leave. Close that session
+         * at its last heartbeat.
+         */
+        finalizeCurrentSession(
+          attendance,
+
+          heartbeat ||
+            now
+        );
+      }
+
+      attendance.lastJoinedAt =
+        now;
+
+      attendance.lastLeftAt =
+        null;
+
+      attendance.activeSessionStartedAt =
+        now;
+
+      attendance.lastHeartbeatAt =
+        now;
+
+      attendance.isPresent =
+        true;
+
+      attendance.joinCount =
+        Number(
+          attendance.joinCount ||
+            0
+        ) + 1;
+
+      attendance.sessions.push({
+        joinedAt:
+          now,
+
+        leftAt:
+          null,
+
+        durationSeconds:
+          0,
+      });
+
+      await attendance.save();
+
+      return Response.json({
+        success: true,
+
+        status:
+          "rejoined",
+      });
+    }
+
+    /* =====================================================
+       HEARTBEAT
+    ===================================================== */
+
+    if (
+      action ===
+      "heartbeat"
+    ) {
+      if (
+        attendance.isPresent
+      ) {
+        attendance.lastHeartbeatAt =
+          now;
+
+        await attendance.save();
       }
 
       return Response.json({
         success: true,
-        action:
-          "join",
       });
     }
 
@@ -202,65 +552,48 @@ export async function POST(
        LEAVE
     ===================================================== */
 
-    if (!attendance) {
-      return Response.json({
-        success: true,
-        action:
-          "leave",
-      });
-    }
-
-    const lastSession =
-      attendance.sessions[
-        attendance.sessions.length -
-          1
-      ];
-
     if (
-      lastSession &&
-      !lastSession.leftAt
+      action ===
+      "leave"
     ) {
-      const durationSeconds =
-        Math.max(
-          0,
-          Math.round(
-            (
-              now.getTime() -
-              new Date(
-                lastSession.joinedAt
-              ).getTime()
-            ) /
-              1000
-          )
-        );
+      /*
+       * Duplicate leave is harmless.
+       */
+      if (
+        !attendance.isPresent
+      ) {
+        return Response.json({
+          success: true,
 
-      lastSession.leftAt =
-        now;
+          status:
+            "already-left",
+        });
+      }
 
-      lastSession.durationSeconds =
-        durationSeconds;
+      finalizeCurrentSession(
+        attendance,
+        now
+      );
 
-      attendance.totalSeconds =
-        (
-          attendance.totalSeconds ||
-          0
-        ) +
-        durationSeconds;
-
-      attendance.lastLeftAt =
+      attendance.lastHeartbeatAt =
         now;
 
       await attendance.save();
+
+      return Response.json({
+        success: true,
+
+        status:
+          "left",
+      });
     }
 
     return Response.json({
       success: true,
-      action:
-        "leave",
     });
   } catch (error) {
     console.error(
-      "Attendance update error:",
+      "Attendance POST error:",
       error
     );
 
@@ -277,7 +610,7 @@ export async function POST(
 }
 
 /* =========================================================
-   GET ATTENDANCE — TEACHER ONLY
+   GET - TEACHER ONLY
 ========================================================= */
 
 export async function GET(
@@ -309,11 +642,12 @@ export async function GET(
       );
 
     const callId =
-      searchParams
-        .get(
+      cleanString(
+        searchParams.get(
           "callId"
-        )
-        ?.trim();
+        ),
+        200
+      );
 
     if (!callId) {
       return Response.json(
@@ -327,64 +661,13 @@ export async function GET(
       );
     }
 
-    const apiKey =
-      process.env
-        .NEXT_PUBLIC_STREAM_API_KEY;
-
-    const apiSecret =
-      process.env
-        .STREAM_API_SECRET;
-
-    if (
-      !apiKey ||
-      !apiSecret
-    ) {
-      return Response.json(
-        {
-          error:
-            "Stream configuration is missing.",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    const streamClient =
-      new StreamClient(
-        apiKey,
-        apiSecret
+    const teacher =
+      await verifyTeacher(
+        callId,
+        userId
       );
 
-    /*
-     * Verify the requesting user
-     * created this meeting.
-     */
-    const query =
-      await streamClient.video.queryCalls({
-        filter_conditions: {
-          id: {
-            $eq:
-              callId,
-          },
-
-          type: {
-            $eq:
-              "development",
-          },
-
-          created_by_user_id: {
-            $eq:
-              userId,
-          },
-        },
-      });
-
-    if (
-      !query.calls ||
-      query.calls.length ===
-        0
-    ) {
+    if (!teacher) {
       return Response.json(
         {
           error:
@@ -409,29 +692,67 @@ export async function GET(
         })
         .lean();
 
-    return Response.json({
-      records:
-        records.map(
-          (
-            record
-          ) => {
-            const sessions =
-              Array.isArray(
-                record.sessions
-              )
-                ? record.sessions
-                : [];
+    const now =
+      new Date();
 
-            const active =
-              sessions.some(
-                (
-                  session:
-                    {
-                      leftAt?: Date | null;
-                    }
-                ) =>
-                  !session.leftAt
+    const attendance =
+      records
+        .map(
+          (
+            record: any
+          ) => {
+            const heartbeat =
+              record.lastHeartbeatAt
+                ? new Date(
+                    record.lastHeartbeatAt
+                  )
+                : null;
+
+            const heartbeatFresh =
+              Boolean(
+                heartbeat &&
+                now.getTime() -
+                  heartbeat.getTime() <=
+                  HEARTBEAT_TIMEOUT_MS
               );
+
+            const present =
+              Boolean(
+                record.isPresent &&
+                heartbeatFresh
+              );
+
+            let totalSeconds =
+              Number(
+                record.totalSeconds ||
+                  0
+              );
+
+            if (
+              record.isPresent &&
+              record.activeSessionStartedAt
+            ) {
+              const start =
+                new Date(
+                  record.activeSessionStartedAt
+                );
+
+              /*
+               * If stale, only count until
+               * last known heartbeat.
+               */
+              const effectiveEnd =
+                present
+                  ? now
+                  : heartbeat ||
+                    now;
+
+              totalSeconds +=
+                secondsBetween(
+                  start,
+                  effectiveEnd
+                );
+            }
 
             return {
               userId:
@@ -441,7 +762,8 @@ export async function GET(
                 record.name,
 
               image:
-                record.image,
+                record.image ||
+                "",
 
               firstJoinedAt:
                 record.firstJoinedAt,
@@ -452,21 +774,65 @@ export async function GET(
               lastLeftAt:
                 record.lastLeftAt,
 
-              totalSeconds:
-                record.totalSeconds ||
-                0,
+              totalSeconds,
 
-              sessionCount:
-                sessions.length,
+              joinCount:
+                record.joinCount ||
+                1,
 
-              active,
+              isPresent:
+                present,
+
+              sessions:
+                record.sessions ||
+                [],
             };
           }
-        ),
+        )
+        .sort(
+          (
+            a,
+            b
+          ) => {
+            if (
+              a.isPresent !==
+              b.isPresent
+            ) {
+              return a.isPresent
+                ? -1
+                : 1;
+            }
+
+            return (
+              new Date(
+                a.firstJoinedAt
+              ).getTime() -
+              new Date(
+                b.firstJoinedAt
+              ).getTime()
+            );
+          }
+        );
+
+    return Response.json({
+      success: true,
+
+      attendance,
+
+      count:
+        attendance.length,
+
+      presentCount:
+        attendance.filter(
+          (
+            item
+          ) =>
+            item.isPresent
+        ).length,
     });
   } catch (error) {
     console.error(
-      "Attendance read error:",
+      "Attendance GET error:",
       error
     );
 

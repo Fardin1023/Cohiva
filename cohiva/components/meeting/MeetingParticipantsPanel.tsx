@@ -10,6 +10,9 @@ import {
 } from "@stream-io/video-react-sdk";
 
 import {
+  useEffect,
+  useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -17,16 +20,47 @@ import type {
   CohivaPermissions,
 } from "./MeetingPermissionsPanel";
 
+import {
+  getIndividualPermissionMap,
+  saveIndividualPermission,
+} from "./cohivaParticipantPermissions";
+
+/* =========================================================
+   TYPES
+========================================================= */
+
 type MeetingParticipantsPanelProps = {
   open: boolean;
+
   onClose: () => void;
 
-  raisedHands:
-    ReadonlySet<string>;
+  raisedHands: ReadonlySet<string>;
 
-  classPermissions:
-    CohivaPermissions;
+  classPermissions: CohivaPermissions;
 };
+
+type ActionType =
+  | "mic"
+  | "camera"
+  | "share"
+  | "remove";
+
+type ModerationNotice = {
+  id: string;
+
+  name: string;
+
+  control:
+    | "Microphone"
+    | "Camera"
+    | "Screen sharing";
+
+  blocked: boolean;
+};
+
+/* =========================================================
+   COMPONENT
+========================================================= */
 
 const MeetingParticipantsPanel = ({
   open,
@@ -39,19 +73,37 @@ const MeetingParticipantsPanel = ({
 
   const {
     useParticipants,
+    useCallCustomData,
   } =
     useCallStateHooks();
 
   const participants =
     useParticipants();
 
-  const [
-    busyUserId,
-    setBusyUserId,
-  ] =
-    useState<string | null>(
-      null
+  const custom =
+    useCallCustomData();
+
+  const teacher =
+    Boolean(
+      call?.isCreatedByMe
     );
+
+  /* =====================================================
+     SEARCH
+  ===================================================== */
+
+  const [
+    search,
+    setSearch,
+  ] =
+    useState("");
+
+  /* =====================================================
+     INDIVIDUAL PERMISSION STATE
+
+     These are synchronized with:
+     custom.cohiva_individual_permissions
+  ===================================================== */
 
   const [
     blockedMic,
@@ -83,6 +135,20 @@ const MeetingParticipantsPanel = ({
       new Set()
     );
 
+  /* =====================================================
+     BUSY / ERROR STATE
+  ===================================================== */
+
+  const [
+    busyAction,
+    setBusyAction,
+  ] =
+    useState<
+      string | null
+    >(
+      null
+    );
+
   const [
     error,
     setError,
@@ -90,46 +156,385 @@ const MeetingParticipantsPanel = ({
     useState("");
 
   const [
-    ending,
-    setEnding,
+    endingCall,
+    setEndingCall,
   ] =
     useState(false);
 
-  if (
-    !open ||
-    !call
-  ) {
-    return null;
-  }
-
-  const teacherId =
-    call.state.createdBy?.id;
-
-  const isTeacher =
-    call.isCreatedByMe;
-
   /* =====================================================
-     BLOCK / ALLOW MIC
+     INDIVIDUAL MODERATION NOTICE
+
+     Example:
+
+       Kamran
+       Camera blocked
   ===================================================== */
 
-  const toggleMicPermission =
-    async (
-      userId: string
-    ) => {
-      try {
-        setBusyUserId(userId);
-        setError("");
+  const [
+    moderationNotice,
+    setModerationNotice,
+  ] =
+    useState<
+      ModerationNotice | null
+    >(
+      null
+    );
+
+  const noticeTimerRef =
+    useRef<
+      ReturnType<
+        typeof setTimeout
+      > | null
+    >(
+      null
+    );
+
+  /* =====================================================
+     READ INDIVIDUAL PERMISSION STATE FROM STREAM
+
+     This is important because the same permission can
+     also be changed from the Stream participant menu.
+
+     So both menus stay synchronized.
+  ===================================================== */
+
+  useEffect(() => {
+    const permissionMap =
+      getIndividualPermissionMap(
+        custom
+      );
+
+    const mic =
+      new Set<string>();
+
+    const camera =
+      new Set<string>();
+
+    const share =
+      new Set<string>();
+
+    Object.entries(
+      permissionMap
+    ).forEach(
+      ([
+        userId,
+        permissions,
+      ]) => {
+        if (
+          permissions.audio ===
+          false
+        ) {
+          mic.add(
+            userId
+          );
+        }
 
         if (
-          blockedMic.has(
+          permissions.video ===
+          false
+        ) {
+          camera.add(
             userId
+          );
+        }
+
+        if (
+          permissions.screenShare ===
+          false
+        ) {
+          share.add(
+            userId
+          );
+        }
+      }
+    );
+
+    setBlockedMic(
+      mic
+    );
+
+    setBlockedCamera(
+      camera
+    );
+
+    setBlockedShare(
+      share
+    );
+  }, [
+    custom,
+  ]);
+
+  /* =====================================================
+     REMOVE STALE LOCAL STATES WHEN USER LEAVES
+  ===================================================== */
+
+  useEffect(() => {
+    const activeIds =
+      new Set(
+        participants.map(
+          (
+            participant
+          ) =>
+            participant.userId
+        )
+      );
+
+    setBlockedMic(
+      (
+        current
+      ) =>
+        new Set(
+          Array.from(
+            current
+          ).filter(
+            (
+              id
+            ) =>
+              activeIds.has(
+                id
+              )
           )
+        )
+    );
+
+    setBlockedCamera(
+      (
+        current
+      ) =>
+        new Set(
+          Array.from(
+            current
+          ).filter(
+            (
+              id
+            ) =>
+              activeIds.has(
+                id
+              )
+          )
+        )
+    );
+
+    setBlockedShare(
+      (
+        current
+      ) =>
+        new Set(
+          Array.from(
+            current
+          ).filter(
+            (
+              id
+            ) =>
+              activeIds.has(
+                id
+              )
+          )
+        )
+    );
+  }, [
+    participants,
+  ]);
+
+  /* =====================================================
+     MODERATION POPUP
+  ===================================================== */
+
+  const showModerationNotice =
+    (
+      name: string,
+
+      control:
+        ModerationNotice["control"],
+
+      blocked: boolean
+    ) => {
+      if (
+        noticeTimerRef.current
+      ) {
+        clearTimeout(
+          noticeTimerRef.current
+        );
+      }
+
+      setModerationNotice({
+        id:
+          crypto.randomUUID(),
+
+        name,
+
+        control,
+
+        blocked,
+      });
+
+      noticeTimerRef.current =
+        setTimeout(
+          () => {
+            setModerationNotice(
+              null
+            );
+
+            noticeTimerRef.current =
+              null;
+          },
+          3500
+        );
+    };
+
+  /* =====================================================
+     TIMER CLEANUP
+  ===================================================== */
+
+  useEffect(() => {
+    return () => {
+      if (
+        noticeTimerRef.current
+      ) {
+        clearTimeout(
+          noticeTimerRef.current
+        );
+      }
+    };
+  }, []);
+
+  /* =====================================================
+     FILTER PARTICIPANTS
+  ===================================================== */
+
+  const filteredParticipants =
+    useMemo(
+      () => {
+        const query =
+          search
+            .trim()
+            .toLowerCase();
+
+        if (
+          !query
+        ) {
+          return participants;
+        }
+
+        return participants.filter(
+          (
+            participant
+          ) => {
+            const name =
+              participant.name ||
+              "";
+
+            return (
+              name
+                .toLowerCase()
+                .includes(
+                  query
+                ) ||
+              participant.userId
+                .toLowerCase()
+                .includes(
+                  query
+                )
+            );
+          }
+        );
+      },
+      [
+        participants,
+        search,
+      ]
+    );
+
+  /* =====================================================
+     ACTION KEY
+  ===================================================== */
+
+  const actionKey =
+    (
+      userId: string,
+      action: ActionType
+    ) =>
+      `${userId}:${action}`;
+
+  /* =====================================================
+     MICROPHONE
+
+     IMPORTANT:
+
+     Disable:
+       revoke SEND_AUDIO
+       save audio:false
+
+     Allow:
+       grant SEND_AUDIO
+       save audio:true
+  ===================================================== */
+
+  const toggleMicrophonePermission =
+    async (
+      userId: string,
+      name: string
+    ) => {
+      if (
+        !call ||
+        !teacher
+      ) {
+        return;
+      }
+
+      /*
+       * If the entire class microphone
+       * permission is disabled, we don't
+       * allow an individual override.
+       */
+      if (
+        !classPermissions.studentMic
+      ) {
+        setError(
+          "Microphones are currently blocked for the whole class. Enable class microphone permission first."
+        );
+
+        return;
+      }
+
+      const currentlyBlocked =
+        blockedMic.has(
+          userId
+        );
+
+      const key =
+        actionKey(
+          userId,
+          "mic"
+        );
+
+      try {
+        setBusyAction(
+          key
+        );
+
+        setError("");
+
+        /* =========================================
+           ALLOW MICROPHONE
+        ========================================= */
+
+        if (
+          currentlyBlocked
         ) {
           await call.grantPermissions(
             userId,
             [
               OwnCapability.SEND_AUDIO,
             ]
+          );
+
+          await saveIndividualPermission(
+            call,
+            custom,
+            userId,
+            "audio",
+            true
           );
 
           setBlockedMic(
@@ -148,61 +553,142 @@ const MeetingParticipantsPanel = ({
               return next;
             }
           );
-        } else {
-          await call.revokePermissions(
-            userId,
-            [
-              OwnCapability.SEND_AUDIO,
-            ]
+
+          showModerationNotice(
+            name,
+            "Microphone",
+            false
           );
 
-          setBlockedMic(
-            (
-              current
-            ) =>
+          return;
+        }
+
+        /* =========================================
+           DISABLE MICROPHONE
+        ========================================= */
+
+        await call.revokePermissions(
+          userId,
+          [
+            OwnCapability.SEND_AUDIO,
+          ]
+        );
+
+        await saveIndividualPermission(
+          call,
+          custom,
+          userId,
+          "audio",
+          false
+        );
+
+        setBlockedMic(
+          (
+            current
+          ) => {
+            const next =
               new Set(
                 current
-              ).add(
-                userId
-              )
-          );
-        }
-      } catch (permissionError) {
+              );
+
+            next.add(
+              userId
+            );
+
+            return next;
+          }
+        );
+
+        showModerationNotice(
+          name,
+          "Microphone",
+          true
+        );
+      } catch (
+        moderationError
+      ) {
         console.error(
-          "Mic permission error:",
-          permissionError
+          "Microphone moderation error:",
+          moderationError
         );
 
         setError(
-          "Unable to change microphone permission."
+          moderationError instanceof
+            Error
+            ? moderationError.message
+            : "Unable to change microphone permission."
         );
       } finally {
-        setBusyUserId(null);
+        setBusyAction(
+          null
+        );
       }
     };
 
   /* =====================================================
-     BLOCK / ALLOW CAMERA
+     CAMERA
   ===================================================== */
 
   const toggleCameraPermission =
     async (
-      userId: string
+      userId: string,
+      name: string
     ) => {
+      if (
+        !call ||
+        !teacher
+      ) {
+        return;
+      }
+
+      if (
+        !classPermissions.studentCamera
+      ) {
+        setError(
+          "Cameras are currently blocked for the whole class. Enable class camera permission first."
+        );
+
+        return;
+      }
+
+      const currentlyBlocked =
+        blockedCamera.has(
+          userId
+        );
+
+      const key =
+        actionKey(
+          userId,
+          "camera"
+        );
+
       try {
-        setBusyUserId(userId);
+        setBusyAction(
+          key
+        );
+
         setError("");
 
+        /* =========================================
+           ALLOW CAMERA
+        ========================================= */
+
         if (
-          blockedCamera.has(
-            userId
-          )
+          currentlyBlocked
         ) {
           await call.grantPermissions(
             userId,
             [
               OwnCapability.SEND_VIDEO,
             ]
+          );
+
+          await saveIndividualPermission(
+            call,
+            custom,
+            userId,
+            "video",
+            true
           );
 
           setBlockedCamera(
@@ -221,61 +707,142 @@ const MeetingParticipantsPanel = ({
               return next;
             }
           );
-        } else {
-          await call.revokePermissions(
-            userId,
-            [
-              OwnCapability.SEND_VIDEO,
-            ]
+
+          showModerationNotice(
+            name,
+            "Camera",
+            false
           );
 
-          setBlockedCamera(
-            (
-              current
-            ) =>
+          return;
+        }
+
+        /* =========================================
+           DISABLE CAMERA
+        ========================================= */
+
+        await call.revokePermissions(
+          userId,
+          [
+            OwnCapability.SEND_VIDEO,
+          ]
+        );
+
+        await saveIndividualPermission(
+          call,
+          custom,
+          userId,
+          "video",
+          false
+        );
+
+        setBlockedCamera(
+          (
+            current
+          ) => {
+            const next =
               new Set(
                 current
-              ).add(
-                userId
-              )
-          );
-        }
-      } catch (permissionError) {
+              );
+
+            next.add(
+              userId
+            );
+
+            return next;
+          }
+        );
+
+        showModerationNotice(
+          name,
+          "Camera",
+          true
+        );
+      } catch (
+        moderationError
+      ) {
         console.error(
-          "Camera permission error:",
-          permissionError
+          "Camera moderation error:",
+          moderationError
         );
 
         setError(
-          "Unable to change camera permission."
+          moderationError instanceof
+            Error
+            ? moderationError.message
+            : "Unable to change camera permission."
         );
       } finally {
-        setBusyUserId(null);
+        setBusyAction(
+          null
+        );
       }
     };
 
   /* =====================================================
-     BLOCK / ALLOW SCREEN SHARE
+     SCREEN SHARING
   ===================================================== */
 
-  const toggleScreenPermission =
+  const toggleScreenSharePermission =
     async (
-      userId: string
+      userId: string,
+      name: string
     ) => {
+      if (
+        !call ||
+        !teacher
+      ) {
+        return;
+      }
+
+      if (
+        !classPermissions.studentScreenShare
+      ) {
+        setError(
+          "Screen sharing is currently blocked for the whole class. Enable class screen sharing first."
+        );
+
+        return;
+      }
+
+      const currentlyBlocked =
+        blockedShare.has(
+          userId
+        );
+
+      const key =
+        actionKey(
+          userId,
+          "share"
+        );
+
       try {
-        setBusyUserId(userId);
+        setBusyAction(
+          key
+        );
+
         setError("");
 
+        /* =========================================
+           ALLOW SCREEN SHARE
+        ========================================= */
+
         if (
-          blockedShare.has(
-            userId
-          )
+          currentlyBlocked
         ) {
           await call.grantPermissions(
             userId,
             [
               OwnCapability.SCREENSHARE,
             ]
+          );
+
+          await saveIndividualPermission(
+            call,
+            custom,
+            userId,
+            "screenShare",
+            true
           );
 
           setBlockedShare(
@@ -294,302 +861,709 @@ const MeetingParticipantsPanel = ({
               return next;
             }
           );
-        } else {
-          await call.revokePermissions(
-            userId,
-            [
-              OwnCapability.SCREENSHARE,
-            ]
+
+          showModerationNotice(
+            name,
+            "Screen sharing",
+            false
           );
 
-          setBlockedShare(
-            (
-              current
-            ) =>
+          return;
+        }
+
+        /* =========================================
+           DISABLE SCREEN SHARE
+        ========================================= */
+
+        await call.revokePermissions(
+          userId,
+          [
+            OwnCapability.SCREENSHARE,
+          ]
+        );
+
+        await saveIndividualPermission(
+          call,
+          custom,
+          userId,
+          "screenShare",
+          false
+        );
+
+        setBlockedShare(
+          (
+            current
+          ) => {
+            const next =
               new Set(
                 current
-              ).add(
-                userId
-              )
-          );
-        }
-      } catch (permissionError) {
+              );
+
+            next.add(
+              userId
+            );
+
+            return next;
+          }
+        );
+
+        showModerationNotice(
+          name,
+          "Screen sharing",
+          true
+        );
+      } catch (
+        moderationError
+      ) {
         console.error(
-          "Screen permission error:",
-          permissionError
+          "Screen-share moderation error:",
+          moderationError
         );
 
         setError(
-          "Unable to change screen sharing permission."
+          moderationError instanceof
+            Error
+            ? moderationError.message
+            : "Unable to change screen-share permission."
         );
       } finally {
-        setBusyUserId(null);
+        setBusyAction(
+          null
+        );
       }
     };
 
   /* =====================================================
-     REMOVE
+     REMOVE PARTICIPANT
+
+     IMPORTANT:
+
+     kickUser() WITHOUT block:true.
+
+     This removes them from the active call
+     but does not ban them from rejoining.
   ===================================================== */
 
   const removeParticipant =
     async (
-      userId: string
+      userId: string,
+      name: string
     ) => {
-      const confirmed =
-        window.confirm(
-          "Remove this participant from the class?"
-        );
-
-      if (!confirmed) {
+      if (
+        !call ||
+        !teacher
+      ) {
         return;
       }
 
+      const confirmed =
+        window.confirm(
+          `Remove ${name} from this meeting?`
+        );
+
+      if (
+        !confirmed
+      ) {
+        return;
+      }
+
+      const key =
+        actionKey(
+          userId,
+          "remove"
+        );
+
       try {
-        setBusyUserId(userId);
+        setBusyAction(
+          key
+        );
+
         setError("");
 
         await call.kickUser({
           user_id:
             userId,
         });
-      } catch (removeError) {
+      } catch (
+        moderationError
+      ) {
         console.error(
           "Remove participant error:",
-          removeError
+          moderationError
         );
 
         setError(
-          "Unable to remove this participant."
+          moderationError instanceof
+            Error
+            ? moderationError.message
+            : "Unable to remove participant."
         );
       } finally {
-        setBusyUserId(null);
+        setBusyAction(
+          null
+        );
       }
     };
 
   /* =====================================================
      END CLASS
+
+     MeetingRoom.tsx handles call.ended
+     and redirects everyone.
+
+     No manual redirect here.
   ===================================================== */
 
   const endClass =
     async () => {
-      if (!isTeacher) {
+      if (
+        !call ||
+        !teacher ||
+        endingCall
+      ) {
         return;
       }
 
       const confirmed =
         window.confirm(
-          "End this class for everyone?"
+          "End this class for everyone?\n\nEveryone will be disconnected from the meeting."
         );
 
-      if (!confirmed) {
+      if (
+        !confirmed
+      ) {
         return;
       }
 
       try {
-        setEnding(true);
+        setEndingCall(
+          true
+        );
+
+        setError("");
 
         await call.endCall();
-
-        onClose();
-      } catch (endError) {
+      } catch (
+        endError
+      ) {
         console.error(
           "End class error:",
           endError
         );
 
-        setEnding(false);
-
         setError(
-          "Unable to end this class."
+          endError instanceof
+            Error
+            ? endError.message
+            : "Unable to end the class."
+        );
+
+        setEndingCall(
+          false
         );
       }
     };
 
+  /* =====================================================
+     HIDDEN
+  ===================================================== */
+
+  if (
+    !open
+  ) {
+    return null;
+  }
+
+  /* =====================================================
+     UI
+  ===================================================== */
+
   return (
-    <div className="fixed inset-0 z-[220] bg-black/45 backdrop-blur-sm">
+    <>
 
-      <button
-        type="button"
-        aria-label="Close participants"
-        onClick={onClose}
-        className="absolute inset-0"
-      />
+      {/* =================================================
+          INDIVIDUAL MODERATION POPUP
+      ================================================= */}
 
-      <aside className="absolute bottom-3 right-3 top-3 z-10 flex w-[calc(100%-24px)] max-w-[410px] flex-col overflow-hidden rounded-[28px] bg-[#FFF7EB] shadow-2xl">
+      {moderationNotice && (
+        <div
+          key={
+            moderationNotice.id
+          }
+          role="status"
+          aria-live="polite"
+          className="fixed left-1/2 top-[78px] z-[400] w-[330px] max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-[20px] border border-[#403A35]/10 bg-[#FFF7EB] p-4 text-[#3D3732] shadow-[0_20px_70px_rgba(0,0,0,0.3)]"
+        >
 
-        <div className="flex shrink-0 items-center justify-between border-b border-[#403A35]/10 px-5 py-4">
+          <div className="flex items-center gap-3">
 
-          <div>
+            {/* ICON */}
 
-            <p className="text-[9px] font-black uppercase tracking-[0.18em] text-[#CC3A63]">
-              Cohiva Classroom
-            </p>
+            <div
+              className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-xl ${
+                moderationNotice.blocked
+                  ? "bg-[#CC3A63]/10"
+                  : "bg-[#A2AB73]/15"
+              }`}
+            >
+              {moderationNotice.control ===
+              "Microphone"
+                ? moderationNotice.blocked
+                  ? "🔇"
+                  : "🎙"
+                : moderationNotice.control ===
+                    "Camera"
+                  ? moderationNotice.blocked
+                    ? "📷"
+                    : "🎥"
+                  : moderationNotice.blocked
+                    ? "🚫"
+                    : "🖥"}
+            </div>
 
-            <h2 className="mt-1 text-xl font-black text-[#3D3732]">
-              Participants
-            </h2>
+            {/* DETAILS */}
 
-            <p className="mt-1 text-xs text-[#756E64]">
-              {participants.length} in class
-            </p>
+            <div className="min-w-0 flex-1">
+
+              <p className="truncate text-sm font-black text-[#3D3732]">
+                {moderationNotice.name}
+              </p>
+
+              <p
+                className={`mt-1 text-xs font-bold ${
+                  moderationNotice.blocked
+                    ? "text-[#CC3A63]"
+                    : "text-[#737C4C]"
+                }`}
+              >
+                {moderationNotice.control}{" "}
+                {moderationNotice.blocked
+                  ? "blocked"
+                  : "allowed"}
+              </p>
+
+            </div>
+
+            {/* STATE */}
+
+            <span
+              className={`rounded-full px-2 py-1 text-[8px] font-black uppercase ${
+                moderationNotice.blocked
+                  ? "bg-[#CC3A63]/10 text-[#CC3A63]"
+                  : "bg-[#A2AB73]/15 text-[#737C4C]"
+              }`}
+            >
+              {moderationNotice.blocked
+                ? "Blocked"
+                : "Allowed"}
+            </span>
 
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close participants"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-[#403A35]/10 text-xl font-black text-[#403A35]"
-          >
-            ×
-          </button>
-
         </div>
+      )}
+
+      {/* =================================================
+          PARTICIPANTS PANEL
+      ================================================= */}
+
+      <aside
+        aria-label="Meeting participants"
+        className="fixed bottom-[76px] right-0 top-[64px] z-[245] flex w-full flex-col overflow-hidden border-l border-[#403A35]/10 bg-[#FFF7EB] text-[#3D3732] shadow-[-18px_0_55px_rgba(0,0,0,0.2)] sm:w-[430px]"
+      >
+
+        {/* =================================================
+            HEADER
+        ================================================= */}
+
+        <header className="shrink-0 border-b border-[#403A35]/10 bg-white px-4 py-4">
+
+          <div className="flex items-start justify-between gap-3">
+
+            <div>
+
+              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-[#CC3A63]">
+                Cohiva Classroom
+              </p>
+
+              <div className="mt-1 flex items-center gap-2">
+
+                <h2 className="text-lg font-black text-[#3D3732]">
+                  Participants
+                </h2>
+
+                <span className="rounded-full bg-[#A2AB73]/15 px-2.5 py-1 text-[9px] font-black text-[#737C4C]">
+                  {participants.length}
+                </span>
+
+              </div>
+
+            </div>
+
+            <button
+              type="button"
+              aria-label="Close participants panel"
+              onClick={
+                onClose
+              }
+              className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F9F0E0] text-lg font-black text-[#3D3732] transition hover:bg-[#CC3A63]/10 hover:text-[#CC3A63]"
+            >
+              ×
+            </button>
+
+          </div>
+
+          {/* SEARCH */}
+
+          <div className="relative mt-4">
+
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm">
+              🔎
+            </span>
+
+            <input
+              type="text"
+              value={
+                search
+              }
+              onChange={(
+                event
+              ) =>
+                setSearch(
+                  event.target.value
+                )
+              }
+              placeholder="Search participants..."
+              className="h-11 w-full rounded-2xl border border-[#403A35]/10 bg-[#FFF7EB] pl-10 pr-3 text-sm font-semibold text-[#3D3732] outline-none transition placeholder:text-[#756E64]/55 focus:border-[#A2AB73]"
+            />
+
+          </div>
+
+        </header>
+
+        {/* =================================================
+            ERROR
+        ================================================= */}
 
         {error && (
-          <div className="mx-4 mt-3 rounded-xl bg-[#CC3A63]/10 p-3 text-xs font-bold text-[#CC3A63]">
+          <div
+            role="alert"
+            className="shrink-0 border-b border-[#CC3A63]/15 bg-[#CC3A63]/10 px-4 py-2.5 text-xs font-bold text-[#CC3A63]"
+          >
             {error}
           </div>
         )}
 
-        {/* ONLY LIST SCROLLS */}
+        {/* =================================================
+            CLASS-WIDE RESTRICTIONS
+        ================================================= */}
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {teacher &&
+          (
+            !classPermissions.studentMic ||
+            !classPermissions.studentCamera ||
+            !classPermissions.studentScreenShare
+          ) && (
+          <div className="shrink-0 border-b border-[#403A35]/10 bg-[#F9F0E0] px-4 py-3">
 
-          <div className="space-y-2">
+            <p className="text-[9px] font-black uppercase tracking-[0.13em] text-[#756E64]">
+              Class-wide blocks
+            </p>
 
-            {participants.map(
+            <div className="mt-2 flex flex-wrap gap-1.5">
+
+              {!classPermissions.studentMic && (
+                <span className="rounded-full bg-white px-2 py-1 text-[9px] font-black text-[#CC3A63]">
+                  🔇 All microphones
+                </span>
+              )}
+
+              {!classPermissions.studentCamera && (
+                <span className="rounded-full bg-white px-2 py-1 text-[9px] font-black text-[#CC3A63]">
+                  📷 All cameras
+                </span>
+              )}
+
+              {!classPermissions.studentScreenShare && (
+                <span className="rounded-full bg-white px-2 py-1 text-[9px] font-black text-[#CC3A63]">
+                  🚫 All screen sharing
+                </span>
+              )}
+
+            </div>
+
+            <p className="mt-2 text-[9px] leading-4 text-[#756E64]">
+              Change class-wide permissions from Meeting Settings.
+            </p>
+
+          </div>
+        )}
+
+        {/* =================================================
+            PARTICIPANT LIST
+        ================================================= */}
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+
+          {filteredParticipants.length ===
+            0 && (
+            <div className="flex h-full items-center justify-center">
+
+              <div className="text-center">
+
+                <div className="text-3xl">
+                  👥
+                </div>
+
+                <p className="mt-3 text-sm font-black text-[#3D3732]">
+                  No participants found
+                </p>
+
+              </div>
+
+            </div>
+          )}
+
+          <div className="space-y-3">
+
+            {filteredParticipants.map(
               (
                 participant
               ) => {
-                const micOn =
-                  hasAudio(
-                    participant
-                  );
+                const participantId =
+                  participant.userId;
 
-                const cameraOn =
-                  hasVideo(
-                    participant
-                  );
-
-                const shareOn =
-                  hasScreenShare(
-                    participant
-                  );
+                const name =
+                  participant.name ||
+                  "Participant";
 
                 const local =
                   participant.isLocalParticipant;
 
-                const teacher =
-                  participant.userId ===
-                  teacherId;
-
-                const hand =
+                const raised =
                   raisedHands.has(
-                    participant.userId
+                    participantId
                   );
 
-                const busy =
-                  busyUserId ===
-                  participant.userId;
+                /* =====================================
+                   CURRENT MEDIA TRACKS
+                ===================================== */
 
-                const micClassBlocked =
-                  !classPermissions.studentMic;
+                const micPublishing =
+                  hasAudio(
+                    participant
+                  );
 
-                const cameraClassBlocked =
-                  !classPermissions.studentCamera;
+                const cameraPublishing =
+                  hasVideo(
+                    participant
+                  );
 
-                const shareClassBlocked =
-                  !classPermissions.studentScreenShare;
+                const sharing =
+                  hasScreenShare(
+                    participant
+                  );
+
+                /* =====================================
+                   INDIVIDUAL PERMISSION STATE
+                ===================================== */
+
+                const individualMicBlocked =
+                  blockedMic.has(
+                    participantId
+                  );
+
+                const individualCameraBlocked =
+                  blockedCamera.has(
+                    participantId
+                  );
+
+                const individualShareBlocked =
+                  blockedShare.has(
+                    participantId
+                  );
+
+                /* =====================================
+                   EFFECTIVE STATE
+                ===================================== */
+
+                const effectiveMicBlocked =
+                  !classPermissions.studentMic ||
+                  individualMicBlocked;
+
+                const effectiveCameraBlocked =
+                  !classPermissions.studentCamera ||
+                  individualCameraBlocked;
+
+                const effectiveShareBlocked =
+                  !classPermissions.studentScreenShare ||
+                  individualShareBlocked;
+
+                /* =====================================
+                   BUSY
+                ===================================== */
+
+                const micBusy =
+                  busyAction ===
+                  actionKey(
+                    participantId,
+                    "mic"
+                  );
+
+                const cameraBusy =
+                  busyAction ===
+                  actionKey(
+                    participantId,
+                    "camera"
+                  );
+
+                const shareBusy =
+                  busyAction ===
+                  actionKey(
+                    participantId,
+                    "share"
+                  );
+
+                const removeBusy =
+                  busyAction ===
+                  actionKey(
+                    participantId,
+                    "remove"
+                  );
 
                 return (
                   <article
                     key={
                       participant.sessionId
                     }
-                    className={`rounded-[20px] border p-3 ${
-                      participant.isSpeaking
-                        ? "border-[#A2AB73] bg-[#A2AB73]/10"
+                    className={`rounded-[20px] border p-3 transition ${
+                      raised
+                        ? "border-[#FACC15]/60 bg-[#FFF7C8]/30"
                         : "border-[#403A35]/10 bg-white"
                     }`}
                   >
 
+                    {/* =====================================
+                        USER INFO
+                    ===================================== */}
+
                     <div className="flex items-center gap-3">
 
-                      {participant.image ? (
-                        <img
-                          src={
-                            participant.image
-                          }
-                          alt={
-                            participant.name ||
-                            "Participant"
-                          }
-                          className="h-11 w-11 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#403A35] font-black text-white">
-                          {(
-                            participant.name ||
-                            participant.userId
-                          )
-                            .charAt(0)
-                            .toUpperCase()}
-                        </div>
-                      )}
+                      {/* AVATAR */}
+
+                      <div className="relative shrink-0">
+
+                        {participant.image ? (
+                          <img
+                            src={
+                              participant.image
+                            }
+                            alt=""
+                            className="h-11 w-11 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#403A35] text-sm font-black text-white">
+                            {name
+                              .charAt(
+                                0
+                              )
+                              .toUpperCase()}
+                          </div>
+                        )}
+
+                        {participant.isSpeaking && (
+                          <span
+                            title="Speaking"
+                            className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-[#A2AB73] text-[8px]"
+                          >
+                            🔊
+                          </span>
+                        )}
+
+                      </div>
+
+                      {/* NAME */}
 
                       <div className="min-w-0 flex-1">
 
-                        <div className="flex flex-wrap items-center gap-1.5">
+                        <div className="flex items-center gap-2">
 
                           <p className="truncate text-sm font-black text-[#3D3732]">
-                            {participant.name ||
-                              participant.userId}
+                            {name}
                           </p>
 
-                          {teacher && (
-                            <span className="rounded-full bg-[#CC3A63]/10 px-2 py-0.5 text-[8px] font-black uppercase text-[#CC3A63]">
-                              Teacher
-                            </span>
-                          )}
-
                           {local && (
-                            <span className="rounded-full bg-[#403A35]/10 px-2 py-0.5 text-[8px] font-black uppercase text-[#756E64]">
+                            <span className="rounded-full bg-[#403A35]/10 px-2 py-0.5 text-[8px] font-black text-[#756E64]">
                               You
                             </span>
                           )}
 
-                          {hand && (
-                            <span className="rounded-full bg-[#FACC15]/20 px-2 py-0.5 text-[9px] font-black text-[#806200]">
-                              ✋ Hand
-                            </span>
-                          )}
-
                         </div>
 
-                        <div className="mt-2 flex gap-2 text-xs">
+                        {/* =================================
+                            MEDIA STATUS
+                        ================================= */}
 
-                          <span>
-                            {micOn
-                              ? "🎙"
-                              : "🔇"}
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+
+                          {/* MIC */}
+
+                          <span
+                            className={`rounded-full px-2 py-1 text-[8px] font-black ${
+                              effectiveMicBlocked
+                                ? "bg-[#CC3A63]/10 text-[#CC3A63]"
+                                : micPublishing
+                                  ? "bg-[#A2AB73]/15 text-[#737C4C]"
+                                  : "bg-[#403A35]/10 text-[#756E64]"
+                            }`}
+                          >
+                            {effectiveMicBlocked
+                              ? "🔒 Mic blocked"
+                              : micPublishing
+                                ? "🎙 Mic on"
+                                : "🔇 Mic off"}
                           </span>
 
-                          <span>
-                            {cameraOn
-                              ? "🎥"
-                              : "📷"}
+                          {/* CAMERA */}
+
+                          <span
+                            className={`rounded-full px-2 py-1 text-[8px] font-black ${
+                              effectiveCameraBlocked
+                                ? "bg-[#CC3A63]/10 text-[#CC3A63]"
+                                : cameraPublishing
+                                  ? "bg-[#A2AB73]/15 text-[#737C4C]"
+                                  : "bg-[#403A35]/10 text-[#756E64]"
+                            }`}
+                          >
+                            {effectiveCameraBlocked
+                              ? "🔒 Camera blocked"
+                              : cameraPublishing
+                                ? "🎥 Camera on"
+                                : "📷 Camera off"}
                           </span>
 
-                          {shareOn && (
-                            <span>
-                              🖥
+                          {/* SHARE BLOCK */}
+
+                          {effectiveShareBlocked && (
+                            <span className="rounded-full bg-[#CC3A63]/10 px-2 py-1 text-[8px] font-black text-[#CC3A63]">
+                              🔒 Share blocked
                             </span>
                           )}
 
-                          {participant.isSpeaking && (
-                            <span className="font-bold text-[#737C4C]">
-                              Speaking
+                          {/* ACTIVE SHARE */}
+
+                          {sharing &&
+                            !effectiveShareBlocked && (
+                            <span className="rounded-full bg-[#A2AB73]/15 px-2 py-1 text-[8px] font-black text-[#737C4C]">
+                              🖥 Sharing
+                            </span>
+                          )}
+
+                          {/* HAND */}
+
+                          {raised && (
+                            <span className="rounded-full bg-[#FACC15]/30 px-2 py-1 text-[8px] font-black text-[#75620A]">
+                              ✋ Raised
                             </span>
                           )}
 
@@ -599,110 +1573,141 @@ const MeetingParticipantsPanel = ({
 
                     </div>
 
-                    {isTeacher &&
-                      !local &&
-                      !teacher && (
-                        <div className="mt-3 grid grid-cols-2 gap-2">
+                    {/* =====================================
+                        INDIVIDUAL TEACHER CONTROLS
+                    ===================================== */}
+
+                    {teacher &&
+                      !local && (
+                      <div className="mt-3 border-t border-[#403A35]/10 pt-3">
+
+                        <p className="mb-2 text-[8px] font-black uppercase tracking-[0.15em] text-[#756E64]/70">
+                          Individual Controls
+                        </p>
+
+                        <div className="grid grid-cols-3 gap-2">
+
+                          {/* =============================
+                              AUDIO
+
+                              ALLOW only appears if this
+                              participant was individually
+                              disabled.
+                          ============================= */}
 
                           <button
                             type="button"
                             disabled={
-                              busy ||
-                              micClassBlocked
+                              micBusy ||
+                              !classPermissions.studentMic
                             }
                             onClick={() =>
-                              void toggleMicPermission(
-                                participant.userId
+                              void toggleMicrophonePermission(
+                                participantId,
+                                name
                               )
                             }
-                            className={`rounded-xl px-3 py-2 text-[10px] font-black disabled:opacity-35 ${
-                              blockedMic.has(
-                                participant.userId
-                              )
-                                ? "bg-[#A2AB73]/15 text-[#737C4C]"
-                                : "bg-[#CC3A63]/10 text-[#CC3A63]"
+                            className={`rounded-xl px-2 py-2.5 text-[9px] font-black transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                              individualMicBlocked
+                                ? "bg-[#A2AB73]/15 text-[#737C4C] hover:bg-[#A2AB73] hover:text-white"
+                                : "bg-[#CC3A63]/10 text-[#CC3A63] hover:bg-[#CC3A63] hover:text-white"
                             }`}
                           >
-                            {micClassBlocked
-                              ? "🔒 Class mic blocked"
-                              : blockedMic.has(
-                                    participant.userId
-                                  )
-                                ? "🎙 Allow mic"
-                                : "🚫 Block mic"}
+                            {micBusy
+                              ? "..."
+                              : !classPermissions.studentMic
+                                ? "🔒 All mic"
+                                : individualMicBlocked
+                                  ? "🎙 Allow audio"
+                                  : "🔇 Disable audio"}
                           </button>
+
+                          {/* =============================
+                              VIDEO
+                          ============================= */}
 
                           <button
                             type="button"
                             disabled={
-                              busy ||
-                              cameraClassBlocked
+                              cameraBusy ||
+                              !classPermissions.studentCamera
                             }
                             onClick={() =>
                               void toggleCameraPermission(
-                                participant.userId
+                                participantId,
+                                name
                               )
                             }
-                            className={`rounded-xl px-3 py-2 text-[10px] font-black disabled:opacity-35 ${
-                              blockedCamera.has(
-                                participant.userId
-                              )
-                                ? "bg-[#A2AB73]/15 text-[#737C4C]"
-                                : "bg-[#CC3A63]/10 text-[#CC3A63]"
+                            className={`rounded-xl px-2 py-2.5 text-[9px] font-black transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                              individualCameraBlocked
+                                ? "bg-[#A2AB73]/15 text-[#737C4C] hover:bg-[#A2AB73] hover:text-white"
+                                : "bg-[#CC3A63]/10 text-[#CC3A63] hover:bg-[#CC3A63] hover:text-white"
                             }`}
                           >
-                            {cameraClassBlocked
-                              ? "🔒 Class camera blocked"
-                              : blockedCamera.has(
-                                    participant.userId
-                                  )
-                                ? "🎥 Allow camera"
-                                : "🚫 Block camera"}
+                            {cameraBusy
+                              ? "..."
+                              : !classPermissions.studentCamera
+                                ? "🔒 All video"
+                                : individualCameraBlocked
+                                  ? "🎥 Allow video"
+                                  : "📷 Disable video"}
                           </button>
+
+                          {/* =============================
+                              SCREEN SHARE
+                          ============================= */}
 
                           <button
                             type="button"
                             disabled={
-                              busy ||
-                              shareClassBlocked
+                              shareBusy ||
+                              !classPermissions.studentScreenShare
                             }
                             onClick={() =>
-                              void toggleScreenPermission(
-                                participant.userId
+                              void toggleScreenSharePermission(
+                                participantId,
+                                name
                               )
                             }
-                            className={`rounded-xl px-3 py-2 text-[10px] font-black disabled:opacity-35 ${
-                              blockedShare.has(
-                                participant.userId
-                              )
-                                ? "bg-[#A2AB73]/15 text-[#737C4C]"
-                                : "bg-[#F9F0E0] text-[#3D3732]"
+                            className={`rounded-xl px-2 py-2.5 text-[9px] font-black transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                              individualShareBlocked
+                                ? "bg-[#A2AB73]/15 text-[#737C4C] hover:bg-[#A2AB73] hover:text-white"
+                                : "bg-[#CC3A63]/10 text-[#CC3A63] hover:bg-[#CC3A63] hover:text-white"
                             }`}
                           >
-                            {shareClassBlocked
-                              ? "🔒 Sharing blocked"
-                              : blockedShare.has(
-                                    participant.userId
-                                  )
-                                ? "🖥 Allow share"
-                                : "🚫 Block share"}
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() =>
-                              void removeParticipant(
-                                participant.userId
-                              )
-                            }
-                            className="rounded-xl bg-[#CC3A63] px-3 py-2 text-[10px] font-black text-white disabled:opacity-35"
-                          >
-                            Remove
+                            {shareBusy
+                              ? "..."
+                              : !classPermissions.studentScreenShare
+                                ? "🔒 All share"
+                                : individualShareBlocked
+                                  ? "🖥 Allow sharing"
+                                  : "🚫 Disable share"}
                           </button>
 
                         </div>
-                      )}
+
+                        {/* REMOVE */}
+
+                        <button
+                          type="button"
+                          disabled={
+                            removeBusy
+                          }
+                          onClick={() =>
+                            void removeParticipant(
+                              participantId,
+                              name
+                            )
+                          }
+                          className="mt-2 w-full rounded-xl border border-[#CC3A63]/20 bg-[#CC3A63]/5 px-3 py-2.5 text-[10px] font-black text-[#CC3A63] transition hover:bg-[#CC3A63] hover:text-white disabled:cursor-wait disabled:opacity-50"
+                        >
+                          {removeBusy
+                            ? "Removing..."
+                            : "🚪 Remove from meeting"}
+                        </button>
+
+                      </div>
+                    )}
 
                   </article>
                 );
@@ -713,28 +1718,50 @@ const MeetingParticipantsPanel = ({
 
         </div>
 
-        {isTeacher && (
-          <div className="shrink-0 border-t border-[#403A35]/10 bg-[#F9F0E0] p-4">
+        {/* =================================================
+            FOOTER
+        ================================================= */}
 
-            <button
-              type="button"
-              onClick={() =>
-                void endClass()
-              }
-              disabled={ending}
-              className="w-full rounded-2xl bg-[#CC3A63] px-4 py-3 text-sm font-black text-white disabled:opacity-60"
-            >
-              {ending
-                ? "Ending class..."
-                : "End class for everyone"}
-            </button>
+        <footer className="shrink-0 border-t border-[#403A35]/10 bg-white p-3">
 
-          </div>
-        )}
+          {teacher ? (
+            <>
+
+              <div className="mb-2 rounded-xl bg-[#F9F0E0] px-3 py-2">
+
+                <p className="text-[9px] leading-4 text-[#756E64]">
+                  Disable audio, video, or screen sharing to prevent that participant from using the feature. The Allow option appears only after you disable that permission.
+                </p>
+
+              </div>
+
+              <button
+                type="button"
+                disabled={
+                  endingCall
+                }
+                onClick={() =>
+                  void endClass()
+                }
+                className="w-full rounded-[14px] bg-[#CC3A63] px-4 py-3 text-xs font-black text-white transition hover:bg-[#B83259] disabled:cursor-wait disabled:opacity-60"
+              >
+                {endingCall
+                  ? "Ending class for everyone..."
+                  : "⏹ End Class for Everyone"}
+              </button>
+
+            </>
+          ) : (
+            <p className="px-2 py-1 text-center text-[10px] font-semibold text-[#756E64]">
+              Only the meeting teacher can moderate participants.
+            </p>
+          )}
+
+        </footer>
 
       </aside>
 
-    </div>
+    </>
   );
 };
 

@@ -11,6 +11,19 @@ import connectMongoDB from "@/lib/mongodb";
 import MeetingJoinRequest from "@/models/MeetingJoinRequest";
 
 /* =========================================================
+   CONFIG
+========================================================= */
+
+const CALL_TYPE =
+  "development";
+
+const ACCESS_KEY =
+  "cohiva_access_mode";
+
+const PENDING_REQUEST_MAX_AGE =
+  15 * 60 * 1000;
+
+/* =========================================================
    TYPES
 ========================================================= */
 
@@ -19,11 +32,29 @@ type MeetingAccessMode =
   | "approval"
   | "locked";
 
-const ACCESS_KEY =
-  "cohiva_access_mode";
+type TeacherCacheEntry = {
+  teacher: boolean;
+  expiresAt: number;
+};
 
 /* =========================================================
-   STREAM
+   SMALL SERVER CACHE
+
+   Avoids repeatedly asking Stream whether
+   the same user is the teacher every 1-2s.
+========================================================= */
+
+const teacherCache =
+  new Map<
+    string,
+    TeacherCacheEntry
+  >();
+
+const TEACHER_CACHE_MS =
+  60_000;
+
+/* =========================================================
+   STREAM CLIENT
 ========================================================= */
 
 const getStreamClient =
@@ -41,7 +72,7 @@ const getStreamClient =
       !apiSecret
     ) {
       throw new Error(
-        "Stream configuration is missing."
+        "Stream server configuration is missing."
       );
     }
 
@@ -52,10 +83,10 @@ const getStreamClient =
   };
 
 /* =========================================================
-   NORMALIZE MODE
+   NORMALIZE ACCESS MODE
 ========================================================= */
 
-const normalizeMode =
+const normalizeAccessMode =
   (
     value:
       unknown
@@ -71,24 +102,27 @@ const normalizeMode =
       return value;
     }
 
+    /*
+     * Safe default.
+     */
     return "approval";
   };
 
 /* =========================================================
-   GET CALL INFORMATION
+   LOAD STREAM CALL
 ========================================================= */
 
-const getCallInformation =
+const getStreamCall =
   async (
     callId:
       string
   ) => {
-    const streamClient =
+    const client =
       getStreamClient();
 
     const call =
-      streamClient.video.call(
-        "development",
+      client.video.call(
+        CALL_TYPE,
         callId
       );
 
@@ -106,28 +140,88 @@ const getCallInformation =
       >;
 
     const accessMode =
-      normalizeMode(
+      normalizeAccessMode(
         custom[
           ACCESS_KEY
         ]
       );
 
+    const creatorId =
+      response.call
+        .created_by?.id ??
+      null;
+
     return {
-      streamClient,
       call,
-      response,
       accessMode,
+      creatorId,
     };
+  };
+
+/* =========================================================
+   VERIFY TEACHER
+
+   Cached briefly to make waiting-room
+   polling cheaper.
+========================================================= */
+
+const verifyTeacher =
+  async (
+    callId:
+      string,
+
+    userId:
+      string
+  ) => {
+    const cacheKey =
+      `${callId}:${userId}`;
+
+    const cached =
+      teacherCache.get(
+        cacheKey
+      );
+
+    if (
+      cached &&
+      cached.expiresAt >
+        Date.now()
+    ) {
+      return cached.teacher;
+    }
+
+    const {
+      creatorId,
+    } =
+      await getStreamCall(
+        callId
+      );
+
+    const teacher =
+      creatorId ===
+      userId;
+
+    teacherCache.set(
+      cacheKey,
+      {
+        teacher,
+
+        expiresAt:
+          Date.now() +
+          TEACHER_CACHE_MS,
+      }
+    );
+
+    return teacher;
   };
 
 /* =========================================================
    GET
 
-   Teacher:
-   pending requests
+   scope=mine
+   Student checks ONLY their own status.
 
-   Student:
-   own status
+   scope=pending
+   Teacher checks waiting room.
 ========================================================= */
 
 export async function GET(
@@ -135,6 +229,10 @@ export async function GET(
     Request
 ) {
   try {
+    /* =====================================================
+       AUTH
+    ===================================================== */
+
     const {
       userId,
     } =
@@ -152,6 +250,10 @@ export async function GET(
       );
     }
 
+    /* =====================================================
+       QUERY
+    ===================================================== */
+
     const {
       searchParams,
     } =
@@ -166,6 +268,12 @@ export async function GET(
         )
         ?.trim();
 
+    const scope =
+      searchParams.get(
+        "scope"
+      ) ??
+      "mine";
+
     if (!callId) {
       return Response.json(
         {
@@ -178,92 +286,127 @@ export async function GET(
       );
     }
 
-    const {
-      response,
-      accessMode,
-    } =
-      await getCallInformation(
-        callId
-      );
-
-    const isTeacher =
-      response.call
-        .created_by?.id ===
-      userId;
-
     await connectMongoDB();
 
     /* =====================================================
-       TEACHER
+       STUDENT STATUS
+
+       Fast path:
+       no Stream network request required.
     ===================================================== */
 
     if (
-      isTeacher
+      scope ===
+      "mine"
     ) {
-      const requests =
+      const joinRequest =
         await MeetingJoinRequest
-          .find({
+          .findOne({
             callId,
 
-            status:
-              "pending",
-          })
-          .sort({
-            requestedAt:
-              1,
+            userId,
           })
           .lean();
 
       return Response.json({
-        teacher: true,
+        success: true,
 
-        accessMode,
-
-        requests:
-          requests.map(
-            (
-              request
-            ) => ({
-              userId:
-                request.userId,
-
-              name:
-                request.name,
-
-              image:
-                request.image,
-
-              status:
-                request.status,
-
-              requestedAt:
-                request.requestedAt,
-            })
-          ),
+        status:
+          joinRequest?.status ??
+          null,
       });
     }
 
     /* =====================================================
-       STUDENT
+       TEACHER WAITING ROOM
     ===================================================== */
 
-    const studentRequest =
+    if (
+      scope !==
+      "pending"
+    ) {
+      return Response.json(
+        {
+          error:
+            "Invalid request scope.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const teacher =
+      await verifyTeacher(
+        callId,
+        userId
+      );
+
+    if (!teacher) {
+      return Response.json(
+        {
+          error:
+            "Only the meeting opener can view the waiting room.",
+        },
+        {
+          status: 403,
+        }
+      );
+    }
+
+    /*
+     * Don't revive extremely old
+     * pending requests.
+     */
+    const oldestAllowed =
+      new Date(
+        Date.now() -
+          PENDING_REQUEST_MAX_AGE
+      );
+
+    const requests =
       await MeetingJoinRequest
-        .findOne({
+        .find({
           callId,
 
-          userId,
+          status:
+            "pending",
+
+          requestedAt: {
+            $gte:
+              oldestAllowed,
+          },
+        })
+        .sort({
+          requestedAt:
+            1,
         })
         .lean();
 
     return Response.json({
-      teacher: false,
+      success: true,
 
-      accessMode,
+      requests:
+        requests.map(
+          (
+            item
+          ) => ({
+            userId:
+              item.userId,
 
-      status:
-        studentRequest?.status ??
-        null,
+            name:
+              item.name,
+
+            image:
+              item.image,
+
+            requestedAt:
+              item.requestedAt,
+
+            status:
+              item.status,
+          })
+        ),
     });
   } catch (error) {
     console.error(
@@ -274,7 +417,7 @@ export async function GET(
     return Response.json(
       {
         error:
-          "Unable to read waiting room status.",
+          "Unable to load the waiting room.",
       },
       {
         status: 500,
@@ -292,6 +435,10 @@ export async function POST(
     Request
 ) {
   try {
+    /* =====================================================
+       AUTH
+    ===================================================== */
+
     const {
       userId,
     } =
@@ -308,6 +455,10 @@ export async function POST(
         }
       );
     }
+
+    /* =====================================================
+       BODY
+    ===================================================== */
 
     const body =
       await request.json();
@@ -333,20 +484,6 @@ export async function POST(
       );
     }
 
-    const {
-      call,
-      response,
-      accessMode,
-    } =
-      await getCallInformation(
-        callId
-      );
-
-    const isTeacher =
-      response.call
-        .created_by?.id ===
-      userId;
-
     /* =====================================================
        STUDENT REQUEST
     ===================================================== */
@@ -356,10 +493,30 @@ export async function POST(
       "request"
     ) {
       /*
-       * Creator never waits.
+       * Only one Stream request happens
+       * here when Ask to Join is clicked.
+       *
+       * It confirms:
+       * - meeting exists
+       * - current access mode
+       * - whether requester is creator
        */
+
+      const {
+        accessMode,
+        creatorId,
+      } =
+        await getStreamCall(
+          callId
+        );
+
+      /* ===============================================
+         CREATOR
+      =============================================== */
+
       if (
-        isTeacher
+        creatorId ===
+        userId
       ) {
         return Response.json({
           success: true,
@@ -400,7 +557,7 @@ export async function POST(
         return Response.json(
           {
             error:
-              "This meeting is currently locked.",
+              "The host has locked this meeting.",
 
             accessMode,
           },
@@ -423,6 +580,11 @@ export async function POST(
           userId,
         });
 
+      /*
+       * Already approved users don't
+       * need to ask every time they
+       * temporarily reconnect.
+       */
       if (
         existing?.status ===
         "approved"
@@ -433,7 +595,8 @@ export async function POST(
           status:
             "approved",
 
-          accessMode,
+          accessMode:
+            "approval",
         });
       }
 
@@ -459,6 +622,13 @@ export async function POST(
               )
           : "";
 
+      /*
+       * Request itself is only MongoDB.
+       *
+       * No custom Stream event.
+       * No need to already be inside
+       * the meeting.
+       */
       await MeetingJoinRequest.findOneAndUpdate(
         {
           callId,
@@ -484,7 +654,8 @@ export async function POST(
         },
 
         {
-          upsert: true,
+          upsert:
+            true,
 
           returnDocument:
             "after",
@@ -500,7 +671,8 @@ export async function POST(
         status:
           "pending",
 
-        accessMode,
+        accessMode:
+          "approval",
       });
     }
 
@@ -517,7 +689,7 @@ export async function POST(
       return Response.json(
         {
           error:
-            "Invalid waiting room action.",
+            "Invalid waiting-room action.",
         },
         {
           status: 400,
@@ -525,8 +697,21 @@ export async function POST(
       );
     }
 
+    /* =====================================================
+       VERIFY HOST + LOAD CALL
+    ===================================================== */
+
+    const {
+      call,
+      creatorId,
+    } =
+      await getStreamCall(
+        callId
+      );
+
     if (
-      !isTeacher
+      creatorId !==
+      userId
     ) {
       return Response.json(
         {
@@ -538,6 +723,10 @@ export async function POST(
         }
       );
     }
+
+    /* =====================================================
+       TARGET USER
+    ===================================================== */
 
     const targetUserId =
       typeof body.targetUserId ===
@@ -575,7 +764,7 @@ export async function POST(
       return Response.json(
         {
           error:
-            "Join request was not found.",
+            "This join request no longer exists.",
         },
         {
           status: 404,
@@ -591,6 +780,10 @@ export async function POST(
       action ===
       "approve"
     ) {
+      /*
+       * Make the user an actual member
+       * BEFORE marking them approved.
+       */
       await call.updateCallMembers({
         update_members: [
           {
@@ -602,7 +795,16 @@ export async function POST(
 
       joinRequest.status =
         "approved";
-    } else {
+    }
+
+    /* =====================================================
+       DENY
+    ===================================================== */
+
+    if (
+      action ===
+      "deny"
+    ) {
       joinRequest.status =
         "denied";
     }
@@ -617,8 +819,6 @@ export async function POST(
 
       status:
         joinRequest.status,
-
-      accessMode,
     });
   } catch (error) {
     console.error(

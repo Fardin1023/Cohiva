@@ -1,14 +1,35 @@
-import { auth, currentUser } from "@clerk/nextjs/server";
-import { StreamClient } from "@stream-io/node-sdk";
+import {
+  auth,
+} from "@clerk/nextjs/server";
+
+import {
+  StreamClient,
+} from "@stream-io/node-sdk";
+
+import {
+  NextResponse,
+} from "next/server";
+
+/* =========================================================
+   GET STREAM TOKEN
+========================================================= */
 
 export async function GET() {
   try {
-    const { userId } = await auth();
+    /* =====================================================
+       CLERK AUTH
+    ===================================================== */
+
+    const {
+      userId,
+    } =
+      await auth();
 
     if (!userId) {
-      return Response.json(
+      return NextResponse.json(
         {
-          error: "Unauthorized",
+          error:
+            "Unauthorized.",
         },
         {
           status: 401,
@@ -16,31 +37,27 @@ export async function GET() {
       );
     }
 
-    const clerkUser = await currentUser();
-
-    if (!clerkUser) {
-      return Response.json(
-        {
-          error: "User not found",
-        },
-        {
-          status: 404,
-        }
-      );
-    }
+    /* =====================================================
+       ENVIRONMENT
+    ===================================================== */
 
     const apiKey =
-      process.env.NEXT_PUBLIC_STREAM_API_KEY;
+      process.env
+        .NEXT_PUBLIC_STREAM_API_KEY;
 
     const apiSecret =
-      process.env.STREAM_API_SECRET;
+      process.env
+        .STREAM_API_SECRET;
 
-    if (!apiKey || !apiSecret) {
+    if (
+      !apiKey ||
+      !apiSecret
+    ) {
       console.error(
-        "Stream API key or secret is missing."
+        "Missing Stream API configuration."
       );
 
-      return Response.json(
+      return NextResponse.json(
         {
           error:
             "Stream configuration is missing.",
@@ -51,47 +68,47 @@ export async function GET() {
       );
     }
 
+    /* =====================================================
+       STREAM SERVER CLIENT
+
+       Increased timeout for any future
+       server operations.
+
+       Token generation itself is local
+       and does not require a Stream API
+       request.
+    ===================================================== */
+
     const streamClient =
       new StreamClient(
         apiKey,
-        apiSecret
+        apiSecret,
+        {
+          timeout: 10000,
+        }
       );
 
-    const fullName =
-      [
-        clerkUser.firstName,
-        clerkUser.lastName,
-      ]
-        .filter(Boolean)
-        .join(" ") ||
-      clerkUser.username ||
-      "Cohiva User";
+    /* =====================================================
+       GENERATE TOKEN
 
-    /*
-     * Keep the Stream user information
-     * synchronized with Clerk.
-     */
-    await streamClient.upsertUsers([
-      {
-        id: userId,
-        role: "user",
-        name: fullName,
-        image: clerkUser.imageUrl,
-      },
-    ]);
+       IMPORTANT:
+       Do NOT call upsertUsers() here.
 
-    /*
-     * Create a short-lived token.
-     * Valid for 4 hours.
-     */
+       The token endpoint must stay fast and
+       reliable because the entire video client
+       depends on it.
+    ===================================================== */
+
     const token =
       streamClient.generateUserToken({
-        user_id: userId,
+        user_id:
+          userId,
+
         validity_in_seconds:
-          60 * 60 * 4,
+          60 * 60,
       });
 
-    return Response.json({
+    return NextResponse.json({
       token,
     });
   } catch (error) {
@@ -100,10 +117,10 @@ export async function GET() {
       error
     );
 
-    return Response.json(
+    return NextResponse.json(
       {
         error:
-          "Unable to generate Stream token.",
+          "Unable to get Stream token.",
       },
       {
         status: 500,

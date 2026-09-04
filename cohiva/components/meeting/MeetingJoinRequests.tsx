@@ -2,6 +2,7 @@
 
 import {
   useCall,
+  useCallStateHooks,
 } from "@stream-io/video-react-sdk";
 
 import {
@@ -29,6 +30,34 @@ type JoinRequest = {
   requestedAt: string;
 };
 
+type MeetingAccessMode =
+  | "open"
+  | "approval"
+  | "locked";
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+const normalizeAccessMode =
+  (
+    value:
+      unknown
+  ): MeetingAccessMode => {
+    if (
+      value ===
+        "open" ||
+      value ===
+        "approval" ||
+      value ===
+        "locked"
+    ) {
+      return value;
+    }
+
+    return "approval";
+  };
+
 /* =========================================================
    COMPONENT
 ========================================================= */
@@ -39,9 +68,22 @@ const MeetingJoinRequests = ({
   const call =
     useCall();
 
+  const {
+    useCallCustomData,
+  } =
+    useCallStateHooks();
+
+  const custom =
+    useCallCustomData();
+
   const teacher =
     Boolean(
       call?.isCreatedByMe
+    );
+
+  const accessMode =
+    normalizeAccessMode(
+      custom?.cohiva_access_mode
     );
 
   /* =====================================================
@@ -70,8 +112,12 @@ const MeetingJoinRequests = ({
   ] =
     useState("");
 
-  const previousCountRef =
-    useRef(0);
+  const previousIdsRef =
+    useRef<
+      Set<string>
+    >(
+      new Set()
+    );
 
   /* =====================================================
      LOAD PENDING REQUESTS
@@ -81,8 +127,14 @@ const MeetingJoinRequests = ({
     useCallback(
       async () => {
         if (
-          !teacher
+          !teacher ||
+          accessMode !==
+            "approval"
         ) {
+          setRequests(
+            []
+          );
+
           return;
         }
 
@@ -91,7 +143,7 @@ const MeetingJoinRequests = ({
             await fetch(
               `/api/meetings/join-request?callId=${encodeURIComponent(
                 callId
-              )}`,
+              )}&scope=pending`,
               {
                 method:
                   "GET",
@@ -122,39 +174,57 @@ const MeetingJoinRequests = ({
               : [];
 
           /* =============================================
-             OPTIONAL BROWSER NOTIFICATION
+             DETECT NEW REQUEST
 
-             Only fires if notification permission
-             was previously granted.
+             Used for screen-reader announcement
+             and optional browser notification.
           ============================================= */
 
+          const previousIds =
+            previousIdsRef.current;
+
+          const newRequest =
+            nextRequests.find(
+              (
+                request
+              ) =>
+                !previousIds.has(
+                  request.userId
+                )
+            );
+
+          previousIdsRef.current =
+            new Set(
+              nextRequests.map(
+                (
+                  request
+                ) =>
+                  request.userId
+              )
+            );
+
+          /*
+           * Browser notification is optional.
+           * It only appears if permission was
+           * already granted previously.
+           */
           if (
+            newRequest &&
             typeof window !==
               "undefined" &&
-            nextRequests.length >
-              previousCountRef.current &&
             "Notification" in
               window &&
             Notification.permission ===
               "granted"
           ) {
-            const newest =
-              nextRequests[
-                nextRequests.length -
-                  1
-              ];
-
             new Notification(
               "Cohiva waiting room",
               {
                 body:
-                  `${newest?.name ?? "Someone"} wants to join your meeting.`,
+                  `${newRequest.name} wants to join your class.`,
               }
             );
           }
-
-          previousCountRef.current =
-            nextRequests.length;
 
           setRequests(
             nextRequests
@@ -170,24 +240,38 @@ const MeetingJoinRequests = ({
             "Waiting room load error:",
             loadError
           );
+
+          /*
+           * Don't constantly flash an error
+           * during a temporary polling failure.
+           * Existing request stays visible.
+           */
         }
       },
       [
+        accessMode,
         callId,
         teacher,
       ]
     );
 
   /* =====================================================
-     POLL WAITING ROOM
+     POLLING
 
-     Checks every second.
+     1.5 seconds is responsive without
+     hammering your API every few hundred ms.
   ===================================================== */
 
   useEffect(() => {
     if (
-      !teacher
+      !teacher ||
+      accessMode !==
+        "approval"
     ) {
+      setRequests(
+        []
+      );
+
       return;
     }
 
@@ -198,7 +282,7 @@ const MeetingJoinRequests = ({
         () => {
           void loadRequests();
         },
-        1000
+        1500
       );
 
     return () => {
@@ -208,6 +292,7 @@ const MeetingJoinRequests = ({
     };
   }, [
     teacher,
+    accessMode,
     loadRequests,
   ]);
 
@@ -224,6 +309,12 @@ const MeetingJoinRequests = ({
         "approve"
         | "deny"
     ) => {
+      if (
+        busyUserId
+      ) {
+        return;
+      }
+
       try {
         setBusyUserId(
           targetUserId
@@ -264,14 +355,14 @@ const MeetingJoinRequests = ({
         ) {
           throw new Error(
             result.error ||
-              "Unable to process join request."
+              "Unable to process request."
           );
         }
 
-        /* =============================================
-           REMOVE REQUEST IMMEDIATELY
-        ============================================= */
-
+        /*
+         * Remove immediately instead of
+         * waiting for the next poll.
+         */
         setRequests(
           (
             current
@@ -283,6 +374,10 @@ const MeetingJoinRequests = ({
                 request.userId !==
                 targetUserId
             )
+        );
+
+        previousIdsRef.current.delete(
+          targetUserId
         );
       } catch (
         decisionError
@@ -296,7 +391,7 @@ const MeetingJoinRequests = ({
           decisionError instanceof
             Error
             ? decisionError.message
-            : "Could not process join request."
+            : "Could not process this request."
         );
       } finally {
         setBusyUserId(
@@ -306,20 +401,18 @@ const MeetingJoinRequests = ({
     };
 
   /* =====================================================
-     DO NOT RENDER FOR STUDENT
+     HIDDEN
   ===================================================== */
 
   if (
     !teacher ||
+    accessMode !==
+      "approval" ||
     requests.length ===
       0
   ) {
     return null;
   }
-
-  /* =====================================================
-     FIRST REQUEST
-  ===================================================== */
 
   const currentRequest =
     requests[0];
@@ -336,21 +429,31 @@ const MeetingJoinRequests = ({
     <section
       role="alertdialog"
       aria-live="assertive"
-      aria-label="Participant waiting for approval"
-      className="fixed right-4 top-[78px] z-[260] w-[355px] max-w-[calc(100vw-32px)] rounded-[24px] border border-[#403A35]/10 bg-[#FFF7EB] p-4 text-[#3D3732] shadow-2xl"
+      aria-label={`${currentRequest.name} wants to join the meeting`}
+      className="fixed right-4 top-[76px] z-[280] w-[360px] max-w-[calc(100vw-32px)] rounded-[24px] border border-[#403A35]/10 bg-[#FFF7EB] p-4 text-[#3D3732] shadow-[0_25px_70px_rgba(0,0,0,0.35)]"
     >
 
-      {/* HEADER */}
+      {/* =================================================
+          HEADER
+      ================================================= */}
 
       <div className="flex items-start justify-between gap-3">
 
         <div>
 
-          <p className="text-[9px] font-black uppercase tracking-[0.17em] text-[#CC3A63]">
-            Waiting Room
-          </p>
+          <div className="flex items-center gap-2">
 
-          <h3 className="mt-1 text-base font-black">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#CC3A63]/10 text-sm">
+              🚪
+            </span>
+
+            <p className="text-[9px] font-black uppercase tracking-[0.17em] text-[#CC3A63]">
+              Waiting Room
+            </p>
+
+          </div>
+
+          <h3 className="mt-2 text-base font-black">
             Someone wants to join
           </h3>
 
@@ -365,9 +468,11 @@ const MeetingJoinRequests = ({
 
       </div>
 
-      {/* PARTICIPANT */}
+      {/* =================================================
+          PARTICIPANT
+      ================================================= */}
 
-      <div className="mt-4 flex items-center gap-3 rounded-[18px] bg-white p-3">
+      <div className="mt-4 flex items-center gap-3 rounded-[18px] border border-[#403A35]/5 bg-white p-3">
 
         {/* AVATAR */}
 
@@ -389,7 +494,7 @@ const MeetingJoinRequests = ({
           </div>
         )}
 
-        {/* NAME */}
+        {/* INFORMATION */}
 
         <div className="min-w-0 flex-1">
 
@@ -402,7 +507,7 @@ const MeetingJoinRequests = ({
           </p>
 
           {currentRequest.requestedAt && (
-            <p className="mt-1 text-[9px] font-semibold text-[#756E64]/70">
+            <p className="mt-1 text-[9px] font-semibold text-[#756E64]/65">
               Requested{" "}
               {new Date(
                 currentRequest.requestedAt
@@ -423,10 +528,12 @@ const MeetingJoinRequests = ({
 
       </div>
 
-      {/* ERROR */}
+      {/* =================================================
+          ERROR
+      ================================================= */}
 
       {error && (
-        <div className="mt-3 rounded-xl bg-[#CC3A63]/10 p-2.5">
+        <div className="mt-3 rounded-xl bg-[#CC3A63]/10 px-3 py-2.5">
 
           <p className="text-xs font-bold text-[#CC3A63]">
             {error}
@@ -435,11 +542,11 @@ const MeetingJoinRequests = ({
         </div>
       )}
 
-      {/* ACTIONS */}
+      {/* =================================================
+          BUTTONS
+      ================================================= */}
 
       <div className="mt-4 grid grid-cols-2 gap-2">
-
-        {/* DENY */}
 
         <button
           type="button"
@@ -452,12 +559,10 @@ const MeetingJoinRequests = ({
               "deny"
             )
           }
-          className="rounded-xl bg-[#CC3A63]/10 px-4 py-2.5 text-xs font-black text-[#CC3A63] transition hover:bg-[#CC3A63] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-xl bg-[#CC3A63]/10 px-4 py-2.5 text-xs font-black text-[#CC3A63] transition hover:bg-[#CC3A63] hover:text-white disabled:cursor-wait disabled:opacity-50"
         >
           Deny
         </button>
-
-        {/* ALLOW */}
 
         <button
           type="button"
@@ -470,16 +575,18 @@ const MeetingJoinRequests = ({
               "approve"
             )
           }
-          className="rounded-xl bg-[#A2AB73] px-4 py-2.5 text-xs font-black text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-xl bg-[#A2AB73] px-4 py-2.5 text-xs font-black text-white transition hover:brightness-95 disabled:cursor-wait disabled:opacity-50"
         >
           {busy
-            ? "Please wait..."
+            ? "Allowing..."
             : "Allow"}
         </button>
 
       </div>
 
-      {/* MULTIPLE WAITING */}
+      {/* =================================================
+          MORE WAITING
+      ================================================= */}
 
       {requests.length >
         1 && (

@@ -15,17 +15,12 @@ import type {
 
 import {
   useCall,
-  useCallStateHooks,
 } from "@stream-io/video-react-sdk";
 
 import type {
   CustomVideoEvent,
   StreamVideoEvent,
 } from "@stream-io/video-react-sdk";
-
-import {
-  useUser,
-} from "@clerk/nextjs";
 
 import {
   useCallback,
@@ -36,17 +31,18 @@ import {
 
 import "@excalidraw/excalidraw/index.css";
 
-import {
-  DEFAULT_COHIVA_PERMISSIONS,
-  type CohivaPermissions,
-} from "./MeetingPermissionsPanel";
-
 /* =========================================================
    TYPES
 ========================================================= */
 
 type WhiteboardCanvasProps = {
   callId: string;
+
+  /*
+   * Whether Whiteboard is the
+   * currently visible meeting tab.
+   */
+  active: boolean;
 };
 
 type WhiteboardTool =
@@ -55,24 +51,18 @@ type WhiteboardTool =
   | "eraser";
 
 type IncomingBatch = {
-  chunks:
-    Array<
-      string | undefined
-    >;
-
-  received:
-    Set<number>;
-
+  chunks: string[];
   total: number;
-
   snapshot: boolean;
 };
 
-type SaveState =
-  | "idle"
-  | "saving"
-  | "saved"
-  | "error";
+type CohivaPermissions = {
+  studentMic?: boolean;
+  studentCamera?: boolean;
+  studentScreenShare?: boolean;
+  studentRecording?: boolean;
+  studentWhiteboard?: boolean;
+};
 
 /* =========================================================
    CONFIG
@@ -81,83 +71,38 @@ type SaveState =
 const WHITEBOARD_EVENT =
   "cohiva-whiteboard";
 
-const MAX_CHUNK_BYTES =
-  1600;
+const CHUNK_SIZE =
+  900;
 
-const LIVE_SYNC_INTERVAL_MS =
-  180;
+const DRAW_SYNC_DELAY =
+  90;
 
-const SETTLE_SNAPSHOT_MS =
-  650;
-
-const RECOVERY_SNAPSHOT_MS =
-  2500;
-
-/*
- * Database autosave waits a little
- * longer than realtime sync.
-
- * We don't need to write to MongoDB
- * on every pen movement.
- */
-const DATABASE_SAVE_DELAY_MS =
-  1800;
+const SAVE_DELAY =
+  900;
 
 /* =========================================================
-   UTF-8 CHUNKING
+   HELPERS
 ========================================================= */
 
 const splitIntoChunks = (
   value: string
 ) => {
-  const encoder =
-    new TextEncoder();
-
   const chunks:
-    string[] =
-    [];
-
-  let currentChunk =
-    "";
-
-  let currentBytes =
-    0;
+    string[] = [];
 
   for (
-    const character of value
+    let index = 0;
+    index <
+    value.length;
+    index +=
+      CHUNK_SIZE
   ) {
-    const bytes =
-      encoder.encode(
-        character
-      ).length;
-
-    if (
-      currentChunk &&
-      currentBytes +
-        bytes >
-        MAX_CHUNK_BYTES
-    ) {
-      chunks.push(
-        currentChunk
-      );
-
-      currentChunk =
-        character;
-
-      currentBytes =
-        bytes;
-    } else {
-      currentChunk +=
-        character;
-
-      currentBytes +=
-        bytes;
-    }
-  }
-
-  if (currentChunk) {
     chunks.push(
-      currentChunk
+      value.slice(
+        index,
+        index +
+          CHUNK_SIZE
+      )
     );
   }
 
@@ -165,83 +110,187 @@ const splitIntoChunks = (
 };
 
 /* =========================================================
-   WHITEBOARD
+   READ WHITEBOARD PERMISSION
+========================================================= */
+
+const readStudentWhiteboardPermission =
+  (
+    custom:
+      Record<
+        string,
+        unknown
+      > |
+      undefined |
+      null
+  ) => {
+    const permissions =
+      custom
+        ?.cohiva_permissions as
+        | CohivaPermissions
+        | undefined;
+
+    return (
+      permissions
+        ?.studentWhiteboard ===
+      true
+    );
+  };
+
+/* =========================================================
+   STORED BOARD PARSER
+========================================================= */
+
+const readStoredElements = (
+  result: any
+): ExcalidrawElement[] | null => {
+  const candidates = [
+    result?.elements,
+
+    result?.state
+      ?.elements,
+
+    result?.whiteboard
+      ?.elements,
+
+    result?.data
+      ?.elements,
+
+    result?.board,
+  ];
+
+  for (
+    const candidate of
+      candidates
+  ) {
+    if (
+      Array.isArray(
+        candidate
+      )
+    ) {
+      return candidate as
+        ExcalidrawElement[];
+    }
+
+    if (
+      typeof candidate ===
+      "string"
+    ) {
+      try {
+        const parsed =
+          JSON.parse(
+            candidate
+          );
+
+        if (
+          Array.isArray(
+            parsed
+          )
+        ) {
+          return parsed as
+            ExcalidrawElement[];
+        }
+
+        if (
+          Array.isArray(
+            parsed
+              ?.elements
+          )
+        ) {
+          return parsed
+            .elements as
+            ExcalidrawElement[];
+        }
+      } catch {
+        /*
+         * Ignore old /
+         * incompatible data.
+         */
+      }
+    }
+  }
+
+  return null;
+};
+
+/* =========================================================
+   COMPONENT
 ========================================================= */
 
 const WhiteboardCanvas = ({
   callId,
+  active,
 }: WhiteboardCanvasProps) => {
   const call =
     useCall();
-
-  const {
-    user,
-  } =
-    useUser();
-
-  const currentUserId =
-    user?.id;
-
-  const {
-    useCallCustomData,
-  } =
-    useCallStateHooks();
-
-  const custom =
-    useCallCustomData();
-
-  /* =====================================================
-     PERMISSIONS
-  ===================================================== */
-
-  const savedPermissions =
-    custom?.cohiva_permissions as
-      | Partial<CohivaPermissions>
-      | undefined;
-
-  const permissions:
-    CohivaPermissions = {
-    ...DEFAULT_COHIVA_PERMISSIONS,
-    ...savedPermissions,
-  };
 
   const isTeacher =
     Boolean(
       call?.isCreatedByMe
     );
 
-  const allowStudents =
-    permissions.studentWhiteboard;
-
-  const canEdit =
-    isTeacher ||
-    allowStudents;
-
   /* =====================================================
-     EXCALIDRAW
+     PERMISSION STATE
+
+     VERY IMPORTANT:
+
+     Students ALWAYS start locked.
+
+     We never infer permission from
+     cached React state during startup.
   ===================================================== */
 
-  const apiRef =
-    useRef<ExcalidrawImperativeAPI | null>(
-      null
+  const [
+    permissionReady,
+    setPermissionReady,
+  ] =
+    useState(
+      isTeacher
     );
 
   const [
-    excalidrawReady,
-    setExcalidrawReady,
+    studentDrawingAllowed,
+    setStudentDrawingAllowed,
   ] =
     useState(false);
 
+  /*
+   * Teacher can always edit.
+   *
+   * Student can edit ONLY after:
+   *
+   * permissionReady === true
+   *
+   * AND
+   *
+   * studentDrawingAllowed === true
+   */
+  const canEdit =
+    isTeacher ||
+    (
+      permissionReady &&
+      studentDrawingAllowed
+    );
+
   /* =====================================================
-     REALTIME REFS
+     REFS
   ===================================================== */
+
+  const apiRef =
+    useRef<
+      ExcalidrawImperativeAPI | null
+    >(
+      null
+    );
 
   const applyingRemoteRef =
     useRef(false);
 
   const lastSentVersionsRef =
     useRef<
-      Map<string, number>
+      Map<
+        string,
+        number
+      >
     >(
       new Map()
     );
@@ -256,46 +305,46 @@ const WhiteboardCanvas = ({
       new Map()
     );
 
-  const liveSyncTimerRef =
-    useRef<number | null>(
+  const syncTimerRef =
+    useRef<
+      ReturnType<
+        typeof setTimeout
+      > | null
+    >(
       null
     );
 
-  const settleTimerRef =
-    useRef<number | null>(
+  const persistTimerRef =
+    useRef<
+      ReturnType<
+        typeof setTimeout
+      > | null
+    >(
       null
     );
 
-  const sendingRef =
-    useRef(false);
-
-  const sendAgainRef =
-    useRef(false);
-
-  const boardDirtyRef =
-    useRef(false);
-
-  const initialSyncCompleteRef =
-    useRef(
-      isTeacher
-    );
-
-  /* =====================================================
-     PERSISTENCE REFS
-  ===================================================== */
-
-  const databaseSaveTimerRef =
-    useRef<number | null>(
+  const syncTimeoutRef =
+    useRef<
+      ReturnType<
+        typeof setTimeout
+      > | null
+    >(
       null
     );
 
-  const databaseSavingRef =
-    useRef(false);
+  /*
+   * Prevent older permission
+   * requests from winning after a
+   * newer request was started.
+   */
+  const permissionRequestRef =
+    useRef(0);
 
-  const databaseSaveAgainRef =
-    useRef(false);
-
-  const persistedBoardLoadedRef =
+  /*
+   * Only load persistent board
+   * once per whiteboard mount.
+   */
+  const boardLoadedRef =
     useRef(false);
 
   /* =====================================================
@@ -311,22 +360,14 @@ const WhiteboardCanvas = ({
     );
 
   const [
-    syncing,
-    setSyncing,
-  ] =
-    useState(
-      !isTeacher
-    );
-
-  const [
-    syncError,
-    setSyncError,
+    initialBoardLoaded,
+    setInitialBoardLoaded,
   ] =
     useState(false);
 
   const [
-    exported,
-    setExported,
+    syncing,
+    setSyncing,
   ] =
     useState(false);
 
@@ -334,315 +375,402 @@ const WhiteboardCanvas = ({
     saveState,
     setSaveState,
   ] =
-    useState<SaveState>(
+    useState<
+      | "idle"
+      | "saving"
+      | "saved"
+      | "error"
+    >(
       "idle"
     );
 
+  const [
+    syncError,
+    setSyncError,
+  ] =
+    useState("");
+
   /* =====================================================
-     LOAD PERSISTED BOARD
+     HARD LOCK STUDENT
   ===================================================== */
 
-  const loadPersistedBoard =
+  const hardLockStudent =
     useCallback(
-      async () => {
+      () => {
+        if (
+          isTeacher
+        ) {
+          return;
+        }
+
+        setPermissionReady(
+          false
+        );
+
+        setStudentDrawingAllowed(
+          false
+        );
+
         const api =
           apiRef.current;
 
-        if (!api) {
+        if (api) {
+          api.setActiveTool({
+            type:
+              "hand",
+          });
+        }
+      },
+      [
+        isTeacher,
+      ]
+    );
+
+  /* =====================================================
+     AUTHORITATIVE PERMISSION REFRESH
+
+     This uses call.get().
+
+     It does NOT trust cached custom
+     hook state for the initial unlock.
+  ===================================================== */
+
+  const refreshWhiteboardPermission =
+    useCallback(
+      async (
+        lockFirst:
+          boolean
+      ) => {
+        if (
+          !call
+        ) {
           return;
+        }
+
+        /*
+         * Unique ID for this request.
+         *
+         * Older responses are ignored.
+         */
+        const requestId =
+          ++permissionRequestRef.current;
+
+        if (
+          lockFirst &&
+          !isTeacher
+        ) {
+          hardLockStudent();
         }
 
         try {
           const response =
-            await fetch(
-              `/api/meetings/whiteboard-state?callId=${encodeURIComponent(
-                callId
-              )}`,
-              {
-                method:
-                  "GET",
+            await call.get();
 
-                cache:
-                  "no-store",
-              }
-            );
-
-          const data =
-            await response.json();
-
+          /*
+           * A newer permission request
+           * already started.
+           */
           if (
-            !response.ok
-          ) {
-            throw new Error(
-              data.error ||
-                "Unable to load saved board."
-            );
-          }
-
-          persistedBoardLoadedRef.current =
-            true;
-
-          if (
-            !data.exists ||
-            !Array.isArray(
-              data.elements
-            ) ||
-            data.elements.length ===
-              0
+            requestId !==
+            permissionRequestRef.current
           ) {
             return;
           }
 
-          const elements =
-            data.elements as
-              ExcalidrawElement[];
-
-          applyingRemoteRef.current =
-            true;
-
-          api.updateScene({
-            elements,
-          });
-
-          /*
-           * Register persisted versions
-           * so simply loading the board
-           * doesn't resend every element
-           * as a new edit.
-           */
-          elements.forEach(
+          const custom =
             (
-              element
-            ) => {
-              lastSentVersionsRef.current.set(
-                element.id,
-                element.version
-              );
-            }
+              response.call
+                .custom ??
+              {}
+            ) as Record<
+              string,
+              unknown
+            >;
+
+          const allowed =
+            readStudentWhiteboardPermission(
+              custom
+            );
+
+          setStudentDrawingAllowed(
+            allowed
           );
 
-          window.requestAnimationFrame(
-            () => {
-              applyingRemoteRef.current =
-                false;
-            }
+          setPermissionReady(
+            true
           );
-
-          /*
-           * Teacher now has the saved
-           * authoritative board locally.
-           */
-          if (
-            isTeacher
-          ) {
-            initialSyncCompleteRef.current =
-              true;
-          }
         } catch (
-          error
+          permissionError
         ) {
           console.error(
-            "Cohiva saved board load error:",
-            error
+            "Whiteboard permission refresh error:",
+            permissionError
           );
 
-          persistedBoardLoadedRef.current =
-            true;
+          /*
+           * Security / permission
+           * failure always fails closed.
+           */
+          if (
+            !isTeacher
+          ) {
+            setStudentDrawingAllowed(
+              false
+            );
+
+            setPermissionReady(
+              true
+            );
+          }
         }
       },
       [
-        callId,
+        call,
+        hardLockStudent,
         isTeacher,
       ]
     );
 
   /* =====================================================
-     LOAD WHEN EXCALIDRAW IS READY
+     THE MAIN GLITCH FIX
+
+     Every time the STUDENT actually
+     OPENS the whiteboard:
+
+     1. lock immediately
+     2. fetch current call
+     3. read latest permission
+     4. only then unlock if allowed
   ===================================================== */
 
   useEffect(() => {
     if (
-      !excalidrawReady ||
-      persistedBoardLoadedRef.current
+      !active ||
+      !call
     ) {
       return;
     }
 
-    void loadPersistedBoard();
+    /*
+     * Teacher never loses editing.
+     *
+     * We still refresh so teacher's
+     * status badge knows whether
+     * students are allowed.
+     */
+    if (
+      isTeacher
+    ) {
+      void refreshWhiteboardPermission(
+        false
+      );
+
+      return;
+    }
+
+    /*
+     * Student must fail closed.
+     */
+    hardLockStudent();
+
+    void refreshWhiteboardPermission(
+      false
+    );
   }, [
-    excalidrawReady,
-    loadPersistedBoard,
+    active,
+    call,
+    isTeacher,
+    hardLockStudent,
+    refreshWhiteboardPermission,
   ]);
 
   /* =====================================================
-     SAVE TO DATABASE
+     LIVE PERMISSION UPDATES
+
+     Teacher changes:
+
+       Settings
+           ↓
+       call.update()
+           ↓
+       Stream call.updated
+           ↓
+       student updates immediately
+
+     We use event custom data directly
+     when available.
+
+     We DO NOT use old cached custom
+     state to unlock during startup.
   ===================================================== */
 
-  const persistBoard =
-    useCallback(
-      async () => {
-        /*
-         * Teacher's browser is the
-         * canonical persistent copy.
-         */
-        if (
-          !isTeacher
-        ) {
-          return;
-        }
+  useEffect(() => {
+    if (
+      !call
+    ) {
+      return;
+    }
 
-        const api =
-          apiRef.current;
-
-        if (!api) {
-          return;
-        }
-
-        if (
-          databaseSavingRef.current
-        ) {
-          databaseSaveAgainRef.current =
-            true;
-
-          return;
-        }
-
-        databaseSavingRef.current =
-          true;
-
-        setSaveState(
-          "saving"
-        );
-
-        try {
-          const elements =
-            api.getSceneElementsIncludingDeleted();
-
-          const response =
-            await fetch(
-              "/api/meetings/whiteboard-state",
-              {
-                method:
-                  "PUT",
-
-                headers: {
-                  "Content-Type":
-                    "application/json",
-                },
-
-                body:
-                  JSON.stringify({
-                    callId,
-
-                    elements,
-
-                    title:
-                      "Cohiva Classroom Whiteboard",
-                  }),
-              }
-            );
-
-          const result =
-            await response.json();
-
+    const unsubscribe =
+      call.on(
+        "call.updated",
+        (
+          event:
+            StreamVideoEvent
+        ) => {
+          /*
+           * Whiteboard is hidden.
+           *
+           * Student will be hard-locked
+           * and refreshed next time they
+           * actually open it.
+           */
           if (
-            !response.ok
+            !active
           ) {
-            throw new Error(
-              result.error ||
-                "Unable to save whiteboard."
-            );
+            return;
           }
 
-          setSaveState(
-            "saved"
-          );
+          const updatedCall =
+            (
+              event as any
+            )?.call;
 
-          window.setTimeout(
-            () => {
-              setSaveState(
-                "idle"
+          const eventCustom =
+            updatedCall
+              ?.custom as
+              | Record<
+                  string,
+                  unknown
+                >
+              | undefined;
+
+          if (
+            eventCustom
+          ) {
+            const permissions =
+              eventCustom
+                .cohiva_permissions as
+                | CohivaPermissions
+                | undefined;
+
+            const value =
+              permissions
+                ?.studentWhiteboard;
+
+            if (
+              typeof value ===
+              "boolean"
+            ) {
+              /*
+               * Invalidate any older
+               * call.get() request.
+               */
+              permissionRequestRef.current +=
+                1;
+
+              setStudentDrawingAllowed(
+                value
               );
-            },
-            2000
-          );
-        } catch (
-          error
-        ) {
-          console.error(
-            "Persistent whiteboard save error:",
-            error
-          );
 
-          setSaveState(
-            "error"
-          );
-        } finally {
-          databaseSavingRef.current =
-            false;
+              setPermissionReady(
+                true
+              );
 
-          if (
-            databaseSaveAgainRef.current
-          ) {
-            databaseSaveAgainRef.current =
-              false;
+              if (
+                !value &&
+                !isTeacher
+              ) {
+                const api =
+                  apiRef.current;
 
-            window.setTimeout(
-              () => {
-                void persistBoard();
-              },
-              150
-            );
+                if (
+                  api
+                ) {
+                  api.setActiveTool({
+                    type:
+                      "hand",
+                  });
+                }
+              }
+
+              return;
+            }
           }
+
+          /*
+           * If event payload did not
+           * contain custom data, fetch
+           * authoritative state.
+           */
+          void refreshWhiteboardPermission(
+            false
+          );
         }
-      },
-      [
-        callId,
-        isTeacher,
-      ]
-    );
+      );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [
+    call,
+    active,
+    isTeacher,
+    refreshWhiteboardPermission,
+  ]);
 
   /* =====================================================
-     SCHEDULE DATABASE SAVE
+     ACTIVE TOOL FROM PERMISSION
   ===================================================== */
 
-  const scheduleDatabaseSave =
-    useCallback(
-      () => {
-        if (
-          !isTeacher
-        ) {
-          return;
-        }
+  useEffect(() => {
+    const api =
+      apiRef.current;
 
-        if (
-          databaseSaveTimerRef.current !==
-          null
-        ) {
-          window.clearTimeout(
-            databaseSaveTimerRef.current
-          );
-        }
+    if (
+      !api
+    ) {
+      return;
+    }
 
-        databaseSaveTimerRef.current =
-          window.setTimeout(
-            () => {
-              databaseSaveTimerRef.current =
-                null;
+    if (
+      !canEdit
+    ) {
+      api.setActiveTool({
+        type:
+          "hand",
+      });
 
-              void persistBoard();
-            },
-            DATABASE_SAVE_DELAY_MS
-          );
-      },
-      [
-        isTeacher,
-        persistBoard,
-      ]
+      return;
+    }
+
+    setActiveTool(
+      "pen"
     );
 
+    api.updateScene({
+      appState: {
+        currentItemStrokeColor:
+          "#202020",
+
+        currentItemOpacity:
+          100,
+
+        currentItemStrokeWidth:
+          2,
+      },
+    });
+
+    api.setActiveTool({
+      type:
+        "freedraw",
+    });
+  }, [
+    canEdit,
+  ]);
+
   /* =====================================================
-     SERVER REALTIME RELAY
+     SERVER RELAY
   ===================================================== */
 
   const relayWhiteboardEvents =
@@ -713,7 +841,8 @@ const WhiteboardCanvas = ({
         elements:
           readonly ExcalidrawElement[],
 
-        snapshot = false
+        snapshot =
+          false
       ) => {
         if (
           elements.length ===
@@ -738,7 +867,7 @@ const WhiteboardCanvas = ({
         const events =
           chunks.map(
             (
-              data,
+              chunk,
               index
             ) => ({
               action:
@@ -753,7 +882,8 @@ const WhiteboardCanvas = ({
 
               snapshot,
 
-              data,
+              data:
+                chunk,
             })
           );
 
@@ -767,16 +897,278 @@ const WhiteboardCanvas = ({
     );
 
   /* =====================================================
-     SEND COMPLETE BOARD
+     PERSIST BOARD
+  ===================================================== */
+
+  const persistBoard =
+    useCallback(
+      async () => {
+        if (
+          !isTeacher
+        ) {
+          return;
+        }
+
+        const api =
+          apiRef.current;
+
+        if (
+          !api
+        ) {
+          return;
+        }
+
+        try {
+          setSaveState(
+            "saving"
+          );
+
+          const elements =
+            api.getSceneElementsIncludingDeleted();
+
+          const response =
+            await fetch(
+              "/api/meetings/whiteboard-state",
+              {
+                method:
+                  "PUT",
+
+                headers: {
+                  "Content-Type":
+                    "application/json",
+                },
+
+                body:
+                  JSON.stringify({
+                    callId,
+                    elements,
+                  }),
+              }
+            );
+
+          const result =
+            await response
+              .json()
+              .catch(
+                () =>
+                  null
+              );
+
+          if (
+            !response.ok
+          ) {
+            throw new Error(
+              result?.error ||
+                "Unable to save whiteboard."
+            );
+          }
+
+          setSaveState(
+            "saved"
+          );
+
+          window.setTimeout(
+            () => {
+              setSaveState(
+                "idle"
+              );
+            },
+            1500
+          );
+        } catch (
+          saveError
+        ) {
+          console.error(
+            "Whiteboard persistence error:",
+            saveError
+          );
+
+          setSaveState(
+            "error"
+          );
+        }
+      },
+      [
+        callId,
+        isTeacher,
+      ]
+    );
+
+  /* =====================================================
+     SCHEDULE PERSISTENCE
+  ===================================================== */
+
+  const schedulePersist =
+    useCallback(
+      () => {
+        if (
+          !isTeacher
+        ) {
+          return;
+        }
+
+        if (
+          persistTimerRef.current
+        ) {
+          clearTimeout(
+            persistTimerRef.current
+          );
+        }
+
+        persistTimerRef.current =
+          setTimeout(
+            () => {
+              void persistBoard();
+            },
+            SAVE_DELAY
+          );
+      },
+      [
+        isTeacher,
+        persistBoard,
+      ]
+    );
+
+  /* =====================================================
+     LOAD PERSISTED BOARD
+
+     Optimized:
+     don't load the whiteboard database
+     until the board is actually opened.
+  ===================================================== */
+
+  useEffect(() => {
+    if (
+      !active ||
+      boardLoadedRef.current
+    ) {
+      return;
+    }
+
+    boardLoadedRef.current =
+      true;
+
+    let cancelled =
+      false;
+
+    const loadBoard =
+      async () => {
+        try {
+          const response =
+            await fetch(
+              `/api/meetings/whiteboard-state?callId=${encodeURIComponent(
+                callId
+              )}`,
+              {
+                cache:
+                  "no-store",
+              }
+            );
+
+          if (
+            !response.ok
+          ) {
+            return;
+          }
+
+          const result =
+            await response.json();
+
+          const elements =
+            readStoredElements(
+              result
+            );
+
+          if (
+            cancelled ||
+            !elements ||
+            !apiRef.current
+          ) {
+            return;
+          }
+
+          applyingRemoteRef.current =
+            true;
+
+          apiRef.current.updateScene({
+            elements,
+          });
+
+          elements.forEach(
+            (
+              element
+            ) => {
+              lastSentVersionsRef.current.set(
+                element.id,
+                element.version
+              );
+            }
+          );
+
+          requestAnimationFrame(
+            () => {
+              applyingRemoteRef.current =
+                false;
+            }
+          );
+        } catch (
+          loadError
+        ) {
+          console.error(
+            "Whiteboard load error:",
+            loadError
+          );
+        } finally {
+          if (
+            !cancelled
+          ) {
+            setInitialBoardLoaded(
+              true
+            );
+          }
+        }
+      };
+
+    const timer =
+      window.setTimeout(
+        () => {
+          void loadBoard();
+        },
+        100
+      );
+
+    return () => {
+      cancelled =
+        true;
+
+      clearTimeout(
+        timer
+      );
+    };
+  }, [
+    active,
+    callId,
+  ]);
+
+  /* =====================================================
+     SEND FULL SNAPSHOT
   ===================================================== */
 
   const sendFullSnapshot =
     useCallback(
       async () => {
+        if (
+          !isTeacher
+        ) {
+          return;
+        }
+
         const api =
           apiRef.current;
 
-        if (!api) {
+        if (
+          !api
+        ) {
           return;
         }
 
@@ -794,14 +1186,6 @@ const WhiteboardCanvas = ({
             },
           ]);
 
-          boardDirtyRef.current =
-            false;
-
-          /*
-           * Persist the cleared state.
-           */
-          scheduleDatabaseSave();
-
           return;
         }
 
@@ -809,30 +1193,10 @@ const WhiteboardCanvas = ({
           elements,
           true
         );
-
-        elements.forEach(
-          (
-            element
-          ) => {
-            lastSentVersionsRef.current.set(
-              element.id,
-              element.version
-            );
-          }
-        );
-
-        boardDirtyRef.current =
-          false;
-
-        /*
-         * Full snapshot is also
-         * a good time to persist.
-         */
-        scheduleDatabaseSave();
       },
       [
+        isTeacher,
         relayWhiteboardEvents,
-        scheduleDatabaseSave,
         sendElements,
       ]
     );
@@ -844,7 +1208,7 @@ const WhiteboardCanvas = ({
   const applyRemoteElements =
     useCallback(
       (
-        incoming:
+        remoteElements:
           ExcalidrawElement[],
 
         snapshot:
@@ -853,109 +1217,101 @@ const WhiteboardCanvas = ({
         const api =
           apiRef.current;
 
-        if (!api) {
+        if (
+          !api
+        ) {
           return;
         }
 
         applyingRemoteRef.current =
           true;
 
-        const current =
-          api.getSceneElementsIncludingDeleted();
-
-        const elementMap =
-          new Map<
-            string,
-            ExcalidrawElement
-          >();
-
-        current.forEach(
+        remoteElements.forEach(
           (
             element
           ) => {
-            elementMap.set(
+            lastSentVersionsRef.current.set(
               element.id,
-              element
+              element.version
             );
           }
         );
 
-        incoming.forEach(
-          (
-            incomingElement
-          ) => {
-            const existing =
-              elementMap.get(
-                incomingElement.id
-              );
+        if (
+          snapshot
+        ) {
+          api.updateScene({
+            elements:
+              remoteElements,
+          });
+        } else {
+          const localElements =
+            api.getSceneElementsIncludingDeleted();
 
-            if (
-              !existing ||
-              incomingElement.version >=
-                existing.version
-            ) {
-              elementMap.set(
-                incomingElement.id,
-                incomingElement
-              );
-            }
+          const map =
+            new Map<
+              string,
+              ExcalidrawElement
+            >();
 
-            const knownVersion =
-              lastSentVersionsRef.current.get(
-                incomingElement.id
-              ) ??
-              -1;
-
-            if (
-              incomingElement.version >
-              knownVersion
-            ) {
-              lastSentVersionsRef.current.set(
-                incomingElement.id,
-                incomingElement.version
+          localElements.forEach(
+            (
+              element
+            ) => {
+              map.set(
+                element.id,
+                element
               );
             }
-          }
-        );
+          );
 
-        api.updateScene({
-          elements:
-            Array.from(
-              elementMap.values()
-            ),
-        });
+          remoteElements.forEach(
+            (
+              incoming
+            ) => {
+              const existing =
+                map.get(
+                  incoming.id
+                );
+
+              if (
+                !existing ||
+                incoming.version >=
+                  existing.version
+              ) {
+                map.set(
+                  incoming.id,
+                  incoming
+                );
+              }
+            }
+          );
+
+          api.updateScene({
+            elements:
+              Array.from(
+                map.values()
+              ),
+          });
+        }
 
         /*
-         * Student edits were received.
-         * Teacher's canonical copy now
-         * needs persistence.
+         * Student edits received by the
+         * teacher become part of the
+         * persistent authoritative board.
          */
         if (
           isTeacher
         ) {
-          boardDirtyRef.current =
-            true;
-
-          scheduleDatabaseSave();
-        }
-
-        if (
-          snapshot &&
-          !isTeacher
-        ) {
-          initialSyncCompleteRef.current =
-            true;
-
-          setSyncing(
-            false
-          );
-
-          setSyncError(
-            false
+          window.setTimeout(
+            () => {
+              schedulePersist();
+            },
+            50
           );
         }
 
-        window.requestAnimationFrame(
+        requestAnimationFrame(
           () => {
             applyingRemoteRef.current =
               false;
@@ -964,16 +1320,18 @@ const WhiteboardCanvas = ({
       },
       [
         isTeacher,
-        scheduleDatabaseSave,
+        schedulePersist,
       ]
     );
 
   /* =====================================================
-     RECEIVE REALTIME EVENTS
+     REALTIME WHITEBOARD EVENTS
   ===================================================== */
 
   useEffect(() => {
-    if (!call) {
+    if (
+      !call
+    ) {
       return;
     }
 
@@ -984,12 +1342,11 @@ const WhiteboardCanvas = ({
           event:
             StreamVideoEvent
         ) => {
-          const customEvent =
-            event as
-              CustomVideoEvent;
-
           const payload =
-            customEvent.custom as
+            (
+              event as
+                CustomVideoEvent
+            ).custom as
               Record<
                 string,
                 unknown
@@ -1002,37 +1359,165 @@ const WhiteboardCanvas = ({
             return;
           }
 
-          if (
-            currentUserId &&
-            payload.senderId ===
-              currentUserId
-          ) {
-            return;
-          }
-
           const action =
             payload.action;
 
-          /* =============================================
-             SYNC REQUEST
-          ============================================= */
+          /* ===========================================
+             ELEMENT CHUNKS
+          =========================================== */
+
+          if (
+            action ===
+            "elements"
+          ) {
+            const {
+              batchId,
+              index,
+              total,
+              data,
+              snapshot,
+            } =
+              payload;
+
+            if (
+              typeof batchId !==
+                "string" ||
+              typeof index !==
+                "number" ||
+              typeof total !==
+                "number" ||
+              typeof data !==
+                "string"
+            ) {
+              return;
+            }
+
+            let batch =
+              incomingBatchesRef.current.get(
+                batchId
+              );
+
+            if (
+              !batch
+            ) {
+              batch = {
+                chunks:
+                  new Array(
+                    total
+                  ),
+
+                total,
+
+                snapshot:
+                  snapshot ===
+                  true,
+              };
+
+              incomingBatchesRef.current.set(
+                batchId,
+                batch
+              );
+
+              window.setTimeout(
+                () => {
+                  incomingBatchesRef.current.delete(
+                    batchId
+                  );
+                },
+                15000
+              );
+            }
+
+            batch.chunks[
+              index
+            ] =
+              data;
+
+            const received =
+              batch.chunks.reduce(
+                (
+                  count,
+                  value
+                ) =>
+                  value
+                    ? count +
+                      1
+                    : count,
+                0
+              );
+
+            if (
+              received !==
+              batch.total
+            ) {
+              return;
+            }
+
+            try {
+              const elements =
+                JSON.parse(
+                  batch.chunks.join(
+                    ""
+                  )
+                ) as
+                  ExcalidrawElement[];
+
+              applyRemoteElements(
+                elements,
+                batch.snapshot
+              );
+
+              incomingBatchesRef.current.delete(
+                batchId
+              );
+
+              setSyncing(
+                false
+              );
+
+              setSyncError(
+                ""
+              );
+
+              if (
+                syncTimeoutRef.current
+              ) {
+                clearTimeout(
+                  syncTimeoutRef.current
+                );
+
+                syncTimeoutRef.current =
+                  null;
+              }
+            } catch (
+              parseError
+            ) {
+              console.error(
+                "Whiteboard parse error:",
+                parseError
+              );
+            }
+
+            return;
+          }
+
+          /* ===========================================
+             STUDENT ASKS FOR TEACHER BOARD
+          =========================================== */
 
           if (
             action ===
               "sync-request" &&
             isTeacher
           ) {
-            void sendFullSnapshot()
-              .catch(
-                console.error
-              );
+            void sendFullSnapshot();
 
             return;
           }
 
-          /* =============================================
+          /* ===========================================
              EMPTY BOARD
-          ============================================= */
+          =========================================== */
 
           if (
             action ===
@@ -1047,7 +1532,9 @@ const WhiteboardCanvas = ({
             const api =
               apiRef.current;
 
-            if (!api) {
+            if (
+              !api
+            ) {
               return;
             }
 
@@ -1058,30 +1545,23 @@ const WhiteboardCanvas = ({
 
             lastSentVersionsRef.current.clear();
 
-            initialSyncCompleteRef.current =
-              true;
-
-            setSyncing(
-              false
-            );
-
-            setSyncError(
-              false
-            );
-
-            window.requestAnimationFrame(
+            requestAnimationFrame(
               () => {
                 applyingRemoteRef.current =
                   false;
+
+                setSyncing(
+                  false
+                );
               }
             );
 
             return;
           }
 
-          /* =============================================
-             CLEAR
-          ============================================= */
+          /* ===========================================
+             CLEAR BOARD
+          =========================================== */
 
           if (
             action ===
@@ -1090,7 +1570,9 @@ const WhiteboardCanvas = ({
             const api =
               apiRef.current;
 
-            if (!api) {
+            if (
+              !api
+            ) {
               return;
             }
 
@@ -1101,204 +1583,11 @@ const WhiteboardCanvas = ({
 
             lastSentVersionsRef.current.clear();
 
-            if (
-              !isTeacher
-            ) {
-              initialSyncCompleteRef.current =
-                true;
-
-              setSyncing(
-                false
-              );
-
-              setSyncError(
-                false
-              );
-            }
-
-            window.requestAnimationFrame(
+            requestAnimationFrame(
               () => {
                 applyingRemoteRef.current =
                   false;
               }
-            );
-
-            return;
-          }
-
-          /* =============================================
-             ELEMENT CHUNK
-          ============================================= */
-
-          if (
-            action !==
-            "elements"
-          ) {
-            return;
-          }
-
-          const batchId =
-            payload.batchId;
-
-          const index =
-            payload.index;
-
-          const total =
-            payload.total;
-
-          const data =
-            payload.data;
-
-          const snapshot =
-            payload.snapshot;
-
-          if (
-            typeof batchId !==
-              "string" ||
-            typeof index !==
-              "number" ||
-            typeof total !==
-              "number" ||
-            typeof data !==
-              "string"
-          ) {
-            return;
-          }
-
-          if (
-            total < 1 ||
-            index < 0 ||
-            index >= total
-          ) {
-            return;
-          }
-
-          let batch =
-            incomingBatchesRef.current.get(
-              batchId
-            );
-
-          if (!batch) {
-            batch = {
-              chunks:
-                Array.from(
-                  {
-                    length:
-                      total,
-                  },
-
-                  () =>
-                    undefined
-                ),
-
-              received:
-                new Set<number>(),
-
-              total,
-
-              snapshot:
-                snapshot ===
-                true,
-            };
-
-            incomingBatchesRef.current.set(
-              batchId,
-              batch
-            );
-
-            window.setTimeout(
-              () => {
-                const unfinished =
-                  incomingBatchesRef.current.get(
-                    batchId
-                  );
-
-                if (
-                  !unfinished
-                ) {
-                  return;
-                }
-
-                incomingBatchesRef.current.delete(
-                  batchId
-                );
-
-                if (
-                  !isTeacher &&
-                  unfinished.snapshot &&
-                  !initialSyncCompleteRef.current
-                ) {
-                  void relayWhiteboardEvents([
-                    {
-                      action:
-                        "sync-request",
-
-                      requestId:
-                        crypto.randomUUID(),
-                    },
-                  ]).catch(
-                    console.error
-                  );
-                }
-              },
-              8000
-            );
-          }
-
-          batch.chunks[
-            index
-          ] =
-            data;
-
-          batch.received.add(
-            index
-          );
-
-          if (
-            batch.received.size !==
-            batch.total
-          ) {
-            return;
-          }
-
-          try {
-            const serialized =
-              batch.chunks
-                .map(
-                  (
-                    chunk
-                  ) =>
-                    chunk ??
-                    ""
-                )
-                .join(
-                  ""
-                );
-
-            const elements =
-              JSON.parse(
-                serialized
-              ) as
-                ExcalidrawElement[];
-
-            applyRemoteElements(
-              elements,
-              batch.snapshot
-            );
-
-            incomingBatchesRef.current.delete(
-              batchId
-            );
-          } catch (
-            error
-          ) {
-            console.error(
-              "Cohiva whiteboard batch parse error:",
-              error
-            );
-
-            incomingBatchesRef.current.delete(
-              batchId
             );
           }
         }
@@ -1309,183 +1598,91 @@ const WhiteboardCanvas = ({
     };
   }, [
     call,
-    currentUserId,
     isTeacher,
     applyRemoteElements,
-    relayWhiteboardEvents,
     sendFullSnapshot,
   ]);
 
   /* =====================================================
-     STUDENT INITIAL LIVE SYNC
+     STUDENT INITIAL SYNC
+
+     Happens only after the student
+     actually opens Whiteboard.
   ===================================================== */
 
   useEffect(() => {
     if (
+      !active ||
       !call ||
-      isTeacher
+      isTeacher ||
+      !initialBoardLoaded
     ) {
       return;
     }
-
-    initialSyncCompleteRef.current =
-      false;
 
     setSyncing(
       true
     );
 
     setSyncError(
-      false
+      ""
     );
 
-    let attempts =
-      0;
-
-    const requestBoard =
-      async () => {
-        if (
-          initialSyncCompleteRef.current
-        ) {
-          return;
-        }
-
-        attempts +=
-          1;
-
-        try {
-          await relayWhiteboardEvents([
+    const timer =
+      window.setTimeout(
+        () => {
+          void relayWhiteboardEvents([
             {
               action:
                 "sync-request",
-
-              requestId:
-                crypto.randomUUID(),
-
-              attempt:
-                attempts,
             },
-          ]);
-        } catch (
-          error
-        ) {
-          console.error(
-            "Cohiva whiteboard sync request error:",
-            error
+          ]).catch(
+            (
+              syncRequestError
+            ) => {
+              console.error(
+                "Whiteboard sync request error:",
+                syncRequestError
+              );
+
+              setSyncing(
+                false
+              );
+
+              setSyncError(
+                "Unable to sync the board."
+              );
+            }
           );
-        }
+        },
+        200
+      );
 
-        /*
-         * The student may already have
-         * loaded the persistent board.
-
-         * If no live teacher responds,
-         * don't leave "Syncing..." there
-         * forever.
-         */
-        if (
-          attempts >=
-            5 &&
-          !initialSyncCompleteRef.current
-        ) {
+    syncTimeoutRef.current =
+      setTimeout(
+        () => {
           setSyncing(
             false
           );
-
-          /*
-           * Only show an error when there
-           * wasn't even a saved board.
-           */
-          if (
-            !persistedBoardLoadedRef.current
-          ) {
-            setSyncError(
-              true
-            );
-          }
-        }
-      };
-
-    const first =
-      window.setTimeout(
-        () => {
-          void requestBoard();
         },
-        400
-      );
-
-    const retry =
-      window.setInterval(
-        () => {
-          if (
-            initialSyncCompleteRef.current
-          ) {
-            window.clearInterval(
-              retry
-            );
-
-            return;
-          }
-
-          void requestBoard();
-        },
-        1300
+        5000
       );
 
     return () => {
-      window.clearTimeout(
-        first
-      );
-
-      window.clearInterval(
-        retry
+      clearTimeout(
+        timer
       );
     };
   }, [
+    active,
     call,
     isTeacher,
+    initialBoardLoaded,
     relayWhiteboardEvents,
   ]);
 
   /* =====================================================
-     TEACHER PUSH ON PARTICIPANT JOIN
-  ===================================================== */
-
-  useEffect(() => {
-    if (
-      !call ||
-      !isTeacher
-    ) {
-      return;
-    }
-
-    const unsubscribe =
-      call.on(
-        "call.session_participant_joined",
-        () => {
-          window.setTimeout(
-            () => {
-              void sendFullSnapshot()
-                .catch(
-                  console.error
-                );
-            },
-            700
-          );
-        }
-      );
-
-    return () => {
-      unsubscribe();
-    };
-  }, [
-    call,
-    isTeacher,
-    sendFullSnapshot,
-  ]);
-
-  /* =====================================================
-     LIVE LOCAL CHANGES
+     SEND LOCAL CHANGES
   ===================================================== */
 
   const sendLocalChanges =
@@ -1493,36 +1690,33 @@ const WhiteboardCanvas = ({
       async () => {
         if (
           !canEdit ||
+          (
+            !isTeacher &&
+            !permissionReady
+          ) ||
           applyingRemoteRef.current
         ) {
-          return;
-        }
-
-        if (
-          sendingRef.current
-        ) {
-          sendAgainRef.current =
-            true;
-
           return;
         }
 
         const api =
           apiRef.current;
 
-        if (!api) {
+        if (
+          !api
+        ) {
           return;
         }
 
-        const elements =
+        const allElements =
           api.getSceneElementsIncludingDeleted();
 
         const changed =
-          elements.filter(
+          allElements.filter(
             (
               element
             ) => {
-              const lastVersion =
+              const last =
                 lastSentVersionsRef.current.get(
                   element.id
                 ) ??
@@ -1530,7 +1724,7 @@ const WhiteboardCanvas = ({
 
               return (
                 element.version >
-                lastVersion
+                last
               );
             }
           );
@@ -1542,15 +1736,16 @@ const WhiteboardCanvas = ({
           return;
         }
 
-        sendingRef.current =
-          true;
-
         try {
           await sendElements(
             changed,
             false
           );
 
+          /*
+           * Mark sent only after
+           * server accepts it.
+           */
           changed.forEach(
             (
               element
@@ -1562,180 +1757,118 @@ const WhiteboardCanvas = ({
             }
           );
 
-          boardDirtyRef.current =
-            true;
+          if (
+            isTeacher
+          ) {
+            schedulePersist();
+          }
         } catch (
-          error
+          relayError
         ) {
           console.error(
-            "Cohiva live whiteboard relay error:",
-            error
+            "Whiteboard relay error:",
+            relayError
           );
-        } finally {
-          sendingRef.current =
-            false;
 
+          setSyncError(
+            "Realtime whiteboard connection was interrupted."
+          );
+
+          /*
+           * If a student got a 403
+           * because teacher disabled
+           * editing, fail closed again.
+           */
           if (
-            sendAgainRef.current
+            !isTeacher
           ) {
-            sendAgainRef.current =
-              false;
+            hardLockStudent();
 
-            window.setTimeout(
-              () => {
-                void sendLocalChanges();
-              },
-              25
+            void refreshWhiteboardPermission(
+              false
             );
           }
         }
       },
       [
         canEdit,
+        isTeacher,
+        permissionReady,
         sendElements,
+        schedulePersist,
+        hardLockStudent,
+        refreshWhiteboardPermission,
       ]
     );
 
   /* =====================================================
-     BOARD CHANGE
+     CHANGE HANDLER
   ===================================================== */
 
   const handleChange =
     () => {
       if (
         !canEdit ||
+        (
+          !isTeacher &&
+          !permissionReady
+        ) ||
         applyingRemoteRef.current
       ) {
         return;
       }
 
-      boardDirtyRef.current =
-        true;
-
-      /* LIVE SYNC */
-
       if (
-        liveSyncTimerRef.current ===
-        null
+        syncTimerRef.current
       ) {
-        liveSyncTimerRef.current =
-          window.setTimeout(
-            () => {
-              liveSyncTimerRef.current =
-                null;
-
-              void sendLocalChanges();
-            },
-            LIVE_SYNC_INTERVAL_MS
-          );
+        clearTimeout(
+          syncTimerRef.current
+        );
       }
 
-      /* DATABASE AUTOSAVE */
+      syncTimerRef.current =
+        setTimeout(
+          () => {
+            void sendLocalChanges();
+          },
+          DRAW_SYNC_DELAY
+        );
+    };
 
-      scheduleDatabaseSave();
+  /* =====================================================
+     CLEANUP
+  ===================================================== */
 
-      /* TEACHER FULL SNAPSHOT */
-
-      if (
-        isTeacher
-      ) {
+  useEffect(
+    () => {
+      return () => {
         if (
-          settleTimerRef.current !==
-          null
+          syncTimerRef.current
         ) {
-          window.clearTimeout(
-            settleTimerRef.current
+          clearTimeout(
+            syncTimerRef.current
           );
         }
 
-        settleTimerRef.current =
-          window.setTimeout(
-            () => {
-              settleTimerRef.current =
-                null;
-
-              void sendFullSnapshot()
-                .catch(
-                  console.error
-                );
-            },
-            SETTLE_SNAPSHOT_MS
+        if (
+          persistTimerRef.current
+        ) {
+          clearTimeout(
+            persistTimerRef.current
           );
-      }
-    };
+        }
 
-  /* =====================================================
-     PERIODIC RECOVERY
-  ===================================================== */
-
-  useEffect(() => {
-    if (
-      !isTeacher
-    ) {
-      return;
-    }
-
-    const timer =
-      window.setInterval(
-        () => {
-          if (
-            !boardDirtyRef.current
-          ) {
-            return;
-          }
-
-          void sendFullSnapshot()
-            .catch(
-              console.error
-            );
-        },
-        RECOVERY_SNAPSHOT_MS
-      );
-
-    return () => {
-      window.clearInterval(
-        timer
-      );
-    };
-  }, [
-    isTeacher,
-    sendFullSnapshot,
-  ]);
-
-  /* =====================================================
-     TIMER CLEANUP
-  ===================================================== */
-
-  useEffect(() => {
-    return () => {
-      if (
-        liveSyncTimerRef.current !==
-        null
-      ) {
-        window.clearTimeout(
-          liveSyncTimerRef.current
-        );
-      }
-
-      if (
-        settleTimerRef.current !==
-        null
-      ) {
-        window.clearTimeout(
-          settleTimerRef.current
-        );
-      }
-
-      if (
-        databaseSaveTimerRef.current !==
-        null
-      ) {
-        window.clearTimeout(
-          databaseSaveTimerRef.current
-        );
-      }
-    };
-  }, []);
+        if (
+          syncTimeoutRef.current
+        ) {
+          clearTimeout(
+            syncTimeoutRef.current
+          );
+        }
+      };
+    },
+    []
+  );
 
   /* =====================================================
      PEN
@@ -1743,14 +1876,22 @@ const WhiteboardCanvas = ({
 
   const usePen =
     () => {
-      if (!canEdit) {
+      if (
+        !canEdit ||
+        (
+          !isTeacher &&
+          !permissionReady
+        )
+      ) {
         return;
       }
 
       const api =
         apiRef.current;
 
-      if (!api) {
+      if (
+        !api
+      ) {
         return;
       }
 
@@ -1783,14 +1924,22 @@ const WhiteboardCanvas = ({
 
   const useHighlighter =
     () => {
-      if (!canEdit) {
+      if (
+        !canEdit ||
+        (
+          !isTeacher &&
+          !permissionReady
+        )
+      ) {
         return;
       }
 
       const api =
         apiRef.current;
 
-      if (!api) {
+      if (
+        !api
+      ) {
         return;
       }
 
@@ -1823,14 +1972,22 @@ const WhiteboardCanvas = ({
 
   const useEraser =
     () => {
-      if (!canEdit) {
+      if (
+        !canEdit ||
+        (
+          !isTeacher &&
+          !permissionReady
+        )
+      ) {
         return;
       }
 
       const api =
         apiRef.current;
 
-      if (!api) {
+      if (
+        !api
+      ) {
         return;
       }
 
@@ -1850,23 +2007,29 @@ const WhiteboardCanvas = ({
 
   const clearBoard =
     async () => {
-      if (!isTeacher) {
+      if (
+        !isTeacher
+      ) {
         return;
       }
 
       const api =
         apiRef.current;
 
-      if (!api) {
+      if (
+        !api
+      ) {
         return;
       }
 
       const confirmed =
         window.confirm(
-          "Clear the whiteboard for everyone?"
+          "Clear the entire Cohiva whiteboard for everyone?"
         );
 
-      if (!confirmed) {
+      if (
+        !confirmed
+      ) {
         return;
       }
 
@@ -1877,10 +2040,7 @@ const WhiteboardCanvas = ({
 
       lastSentVersionsRef.current.clear();
 
-      boardDirtyRef.current =
-        false;
-
-      window.requestAnimationFrame(
+      requestAnimationFrame(
         () => {
           applyingRemoteRef.current =
             false;
@@ -1895,68 +2055,13 @@ const WhiteboardCanvas = ({
           },
         ]);
 
-        /*
-         * Save the empty board
-         * immediately.
-         */
         await persistBoard();
       } catch (
-        error
+        clearError
       ) {
         console.error(
-          "Cohiva clear whiteboard error:",
-          error
-        );
-      }
-    };
-
-  /* =====================================================
-     MANUAL SYNC RETRY
-  ===================================================== */
-
-  const retrySync =
-    async () => {
-      if (
-        isTeacher
-      ) {
-        return;
-      }
-
-      initialSyncCompleteRef.current =
-        false;
-
-      setSyncError(
-        false
-      );
-
-      setSyncing(
-        true
-      );
-
-      try {
-        await relayWhiteboardEvents([
-          {
-            action:
-              "sync-request",
-
-            requestId:
-              crypto.randomUUID(),
-          },
-        ]);
-      } catch (
-        error
-      ) {
-        console.error(
-          "Cohiva manual whiteboard sync error:",
-          error
-        );
-
-        setSyncing(
-          false
-        );
-
-        setSyncError(
-          true
+          "Whiteboard clear error:",
+          clearError
         );
       }
     };
@@ -1965,12 +2070,14 @@ const WhiteboardCanvas = ({
      EXPORT PNG
   ===================================================== */
 
-  const exportBoard =
+  const saveBoard =
     async () => {
       const api =
         apiRef.current;
 
-      if (!api) {
+      if (
+        !api
+      ) {
         return;
       }
 
@@ -2019,30 +2126,24 @@ const WhiteboardCanvas = ({
 
         link.click();
 
-        link.remove();
-
-        URL.revokeObjectURL(
-          url
-        );
-
-        setExported(
-          true
+        document.body.removeChild(
+          link
         );
 
         window.setTimeout(
           () => {
-            setExported(
-              false
+            URL.revokeObjectURL(
+              url
             );
           },
-          1800
+          1000
         );
       } catch (
-        error
+        exportError
       ) {
         console.error(
-          "Cohiva whiteboard export error:",
-          error
+          "Whiteboard export error:",
+          exportError
         );
       }
     };
@@ -2054,12 +2155,14 @@ const WhiteboardCanvas = ({
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white">
 
-      {/* TOOLBAR */}
+      {/* =================================================
+          TOOLBAR
+      ================================================= */}
 
-      <div className="flex min-h-[50px] shrink-0 flex-wrap items-center gap-2 border-b border-[#403A35]/10 bg-[#FFF7EB] px-3 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[#403A35]/10 bg-[#FFF7EB] px-3 py-3 sm:px-4">
 
         <div
-          className={`rounded-full px-3 py-1.5 text-[9px] font-black uppercase tracking-[0.14em] ${
+          className={`mr-1 rounded-full px-3 py-2 text-[10px] font-black uppercase tracking-[0.14em] ${
             isTeacher
               ? "bg-[#CC3A63]/10 text-[#CC3A63]"
               : "bg-[#A2AB73]/15 text-[#737C4C]"
@@ -2078,7 +2181,7 @@ const WhiteboardCanvas = ({
           disabled={
             !canEdit
           }
-          className={`rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-35 ${
+          className={`rounded-xl px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-35 ${
             activeTool ===
             "pen"
               ? "bg-[#403A35] text-white"
@@ -2096,7 +2199,7 @@ const WhiteboardCanvas = ({
           disabled={
             !canEdit
           }
-          className={`rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-35 ${
+          className={`rounded-xl px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-35 ${
             activeTool ===
             "highlighter"
               ? "bg-[#FACC15] text-[#403A35]"
@@ -2114,7 +2217,7 @@ const WhiteboardCanvas = ({
           disabled={
             !canEdit
           }
-          className={`rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-35 ${
+          className={`rounded-xl px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-35 ${
             activeTool ===
             "eraser"
               ? "bg-[#CC3A63] text-white"
@@ -2124,134 +2227,137 @@ const WhiteboardCanvas = ({
           ⌫ Eraser
         </button>
 
-        {/* PNG EXPORT */}
-
         <button
           type="button"
           onClick={
-            exportBoard
+            saveBoard
           }
-          className="rounded-lg bg-[#A2AB73]/15 px-3 py-1.5 text-xs font-bold text-[#737C4C]"
+          className="rounded-xl bg-[#A2AB73]/15 px-3 py-2 text-sm font-bold text-[#737C4C]"
         >
-          {exported
-            ? "✓ Downloaded"
-            : "↓ PNG"}
+          ↓ PNG
         </button>
-
-        {/* MANUAL DATABASE SAVE */}
 
         {isTeacher && (
           <button
             type="button"
             onClick={() =>
-              void persistBoard()
+              void clearBoard()
             }
-            disabled={
-              saveState ===
-              "saving"
-            }
-            className="rounded-lg bg-[#A2AB73] px-3 py-1.5 text-xs font-black text-white disabled:opacity-60"
-          >
-            {saveState ===
-            "saving"
-              ? "Saving..."
-              : saveState ===
-                  "saved"
-                ? "✓ Saved"
-                : saveState ===
-                    "error"
-                  ? "Save failed"
-                  : "☁ Save"}
-          </button>
-        )}
-
-        {isTeacher && (
-          <button
-            type="button"
-            onClick={
-              clearBoard
-            }
-            className="rounded-lg bg-[#CC3A63]/10 px-3 py-1.5 text-xs font-bold text-[#CC3A63]"
+            className="rounded-xl bg-[#CC3A63]/10 px-3 py-2 text-sm font-bold text-[#CC3A63]"
           >
             🧹 Clear
           </button>
         )}
 
-        <div className="ml-auto hidden text-right sm:block">
+        <div className="ml-auto flex items-center gap-2">
 
-          <p className="text-[9px] font-black uppercase tracking-[0.15em] text-[#CC3A63]">
-            Cohiva Classroom
-          </p>
+          {/* STUDENT CHECKING */}
 
-          <p className="text-[10px] font-bold text-[#756E64]">
-            {isTeacher
-              ? saveState ===
-                  "saving"
-                ? "Saving board..."
-                : saveState ===
-                    "saved"
-                  ? "☁ Board saved"
-                  : allowStudents
-                    ? "Students can draw"
-                    : "Students view only"
-              : canEdit
+          {!isTeacher &&
+            !permissionReady && (
+            <div className="rounded-xl bg-[#F9F0E0] px-3 py-2 text-[10px] font-black text-[#756E64]">
+              🔐 Checking access...
+            </div>
+          )}
+
+          {/* STUDENT RESULT */}
+
+          {!isTeacher &&
+            permissionReady && (
+            <div
+              className={`rounded-xl px-3 py-2 text-[10px] font-black ${
+                canEdit
+                  ? "bg-[#A2AB73]/15 text-[#737C4C]"
+                  : "bg-[#403A35]/10 text-[#756E64]"
+              }`}
+            >
+              {canEdit
                 ? "✏ You can draw"
-                : "👀 View only"}
-          </p>
+                : "🔒 View only"}
+            </div>
+          )}
+
+          {/* TEACHER STATUS */}
+
+          {isTeacher && (
+            <div
+              className={`rounded-xl px-3 py-2 text-[10px] font-black ${
+                studentDrawingAllowed
+                  ? "bg-[#A2AB73]/15 text-[#737C4C]"
+                  : "bg-[#403A35]/10 text-[#756E64]"
+              }`}
+            >
+              {studentDrawingAllowed
+                ? "✏ Students can draw"
+                : "👀 Students view only"}
+            </div>
+          )}
+
+          {saveState ===
+            "saving" && (
+            <span className="hidden text-[9px] font-black text-[#756E64] md:inline">
+              Saving...
+            </span>
+          )}
+
+          {saveState ===
+            "saved" && (
+            <span className="hidden text-[9px] font-black text-[#737C4C] md:inline">
+              ✓ Saved
+            </span>
+          )}
 
         </div>
 
       </div>
 
-      {/* SYNC STATUS */}
+      {/* =================================================
+          SYNC
+      ================================================= */}
 
       {syncing && (
-        <div className="shrink-0 bg-[#A2AB73]/10 px-4 py-1.5 text-center text-[11px] font-bold text-[#737C4C]">
-          Syncing teacher&apos;s whiteboard...
+        <div className="shrink-0 bg-[#A2AB73]/10 px-4 py-2 text-center text-xs font-bold text-[#737C4C]">
+          Syncing the teacher&apos;s whiteboard...
         </div>
       )}
 
       {syncError && (
-        <div className="flex shrink-0 items-center justify-center gap-3 bg-[#CC3A63]/10 px-4 py-1.5">
-
-          <span className="text-[11px] font-bold text-[#CC3A63]">
-            Live whiteboard sync did not complete.
-          </span>
-
-          <button
-            type="button"
-            onClick={() =>
-              void retrySync()
-            }
-            className="rounded-lg bg-[#CC3A63] px-3 py-1 text-[10px] font-black text-white"
-          >
-            Retry
-          </button>
-
+        <div className="shrink-0 bg-[#CC3A63]/10 px-4 py-2 text-center text-xs font-bold text-[#CC3A63]">
+          {syncError}
         </div>
       )}
 
-      {/* BOARD */}
+      {/* =================================================
+          EXCALIDRAW
+      ================================================= */}
 
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1">
 
         <Excalidraw
-          excalidrawAPI={(
-            api
-          ) => {
-            apiRef.current =
-              api;
-
-            setExcalidrawReady(
-              true
-            );
-          }}
+  excalidrawAPI={(api) => {
+    /*
+     * Only store the Excalidraw API here.
+     *
+     * Do NOT call setActiveTool() inside this
+     * callback because Excalidraw may not have
+     * completely mounted yet.
+     */
+    apiRef.current =
+      api;
+  }}
           onChange={
             handleChange
           }
+
+          /*
+           * Student is view-only unless
+           * permission has explicitly
+           * been verified as allowed.
+         */
           viewModeEnabled={
             !canEdit
           }
+
           initialData={{
             appState: {
               viewBackgroundColor:
@@ -2267,28 +2373,47 @@ const WhiteboardCanvas = ({
                 2,
             },
           }}
+
           UIOptions={{
             canvasActions: {
-              changeViewBackgroundColor:
-                isTeacher,
-
               clearCanvas:
-                false,
-
-              export:
-                false,
-
-              loadScene:
-                false,
-
-              saveToActiveFile:
-                false,
-
-              toggleTheme:
                 false,
             },
           }}
         />
+
+        {/* =================================================
+            HARD STUDENT GATE
+
+            This prevents pointer input
+            while permission is unknown.
+
+            It exists even though
+            viewModeEnabled is already
+            false/true accordingly.
+        ================================================= */}
+
+        {!isTeacher &&
+          active &&
+          !permissionReady && (
+          <div className="absolute inset-0 z-[150] flex items-center justify-center bg-white/80 backdrop-blur-[1px]">
+
+            <div className="rounded-[22px] border border-[#403A35]/10 bg-[#FFF7EB] px-6 py-5 text-center shadow-xl">
+
+              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-[#A2AB73]/20 border-t-[#A2AB73]" />
+
+              <p className="mt-3 font-black text-[#3D3732]">
+                Checking whiteboard access
+              </p>
+
+              <p className="mt-1 text-xs text-[#756E64]">
+                Applying the teacher&apos;s current permission...
+              </p>
+
+            </div>
+
+          </div>
+        )}
 
       </div>
 
