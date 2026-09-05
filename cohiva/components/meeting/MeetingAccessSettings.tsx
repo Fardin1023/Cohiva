@@ -257,13 +257,13 @@ const MeetingAccessSettings = ({
   ===================================================== */
 
   return (
-    <section className="rounded-[22px] border border-[#403A35]/10 bg-white p-4">
+    <section className="rounded-[20px] border border-[#403A35]/10 bg-white p-3 sm:rounded-[22px] sm:p-4">
 
       {/* =================================================
           HEADER
       ================================================= */}
 
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-3 sm:gap-4">
 
         <div>
 
@@ -271,11 +271,11 @@ const MeetingAccessSettings = ({
             Meeting Access
           </p>
 
-          <h3 className="mt-1 font-black text-[#3D3732]">
+          <h3 className="mt-0.5 text-sm font-black text-[#3D3732] sm:mt-1 sm:text-base">
             Who can enter?
           </h3>
 
-          <p className="mt-1 text-[11px] leading-5 text-[#756E64]">
+          <p className="mt-1 text-[10px] leading-4 text-[#756E64] sm:text-[11px] sm:leading-5">
             Choose how people with the meeting link enter your classroom.
           </p>
 
@@ -306,7 +306,7 @@ const MeetingAccessSettings = ({
           OPTIONS
       ================================================= */}
 
-      <div className="mt-4 grid gap-2">
+      <div className="mt-3 grid gap-1.5 sm:mt-4 sm:gap-2">
 
         {/* =================================================
             OPEN
@@ -326,7 +326,7 @@ const MeetingAccessSettings = ({
             selectedMode ===
             "open"
           }
-          className={`flex items-center gap-3 rounded-2xl border p-3 text-left transition ${
+          className={`flex items-center gap-2.5 rounded-2xl border p-2.5 text-left transition sm:gap-3 sm:p-3 ${
             selectedMode ===
             "open"
               ? "border-[#A2AB73] bg-[#A2AB73]/10 shadow-sm"
@@ -334,17 +334,17 @@ const MeetingAccessSettings = ({
           } disabled:cursor-wait disabled:opacity-70`}
         >
 
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-xl shadow-sm">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-base shadow-sm sm:h-11 sm:w-11 sm:text-xl">
             🌐
           </div>
 
           <div className="min-w-0 flex-1">
 
-            <p className="text-sm font-black text-[#3D3732]">
+            <p className="text-[13px] font-black text-[#3D3732] sm:text-sm">
               Open
             </p>
 
-            <p className="mt-0.5 text-[10px] leading-4 text-[#756E64]">
+            <p className="mt-0.5 text-[9px] leading-[14px] text-[#756E64] sm:text-[10px] sm:leading-4">
               Anyone signed in with the meeting link can enter immediately.
             </p>
 
@@ -377,7 +377,7 @@ const MeetingAccessSettings = ({
             selectedMode ===
             "approval"
           }
-          className={`flex items-center gap-3 rounded-2xl border p-3 text-left transition ${
+          className={`flex items-center gap-2.5 rounded-2xl border p-2.5 text-left transition sm:gap-3 sm:p-3 ${
             selectedMode ===
             "approval"
               ? "border-[#A2AB73] bg-[#A2AB73]/10 shadow-sm"
@@ -385,17 +385,17 @@ const MeetingAccessSettings = ({
           } disabled:cursor-wait disabled:opacity-70`}
         >
 
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-xl shadow-sm">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-base shadow-sm sm:h-11 sm:w-11 sm:text-xl">
             🚪
           </div>
 
           <div className="min-w-0 flex-1">
 
-            <p className="text-sm font-black text-[#3D3732]">
+            <p className="text-[13px] font-black text-[#3D3732] sm:text-sm">
               Ask to join
             </p>
 
-            <p className="mt-0.5 text-[10px] leading-4 text-[#756E64]">
+            <p className="mt-0.5 text-[9px] leading-[14px] text-[#756E64] sm:text-[10px] sm:leading-4">
               The meeting opener must approve each new participant.
             </p>
 
@@ -428,7 +428,7 @@ const MeetingAccessSettings = ({
             selectedMode ===
             "locked"
           }
-          className={`flex items-center gap-3 rounded-2xl border p-3 text-left transition ${
+          className={`flex items-center gap-2.5 rounded-2xl border p-2.5 text-left transition sm:gap-3 sm:p-3 ${
             selectedMode ===
             "locked"
               ? "border-[#CC3A63] bg-[#CC3A63]/10 shadow-sm"
@@ -436,17 +436,17 @@ const MeetingAccessSettings = ({
           } disabled:cursor-wait disabled:opacity-70`}
         >
 
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-xl shadow-sm">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-base shadow-sm sm:h-11 sm:w-11 sm:text-xl">
             🔒
           </div>
 
           <div className="min-w-0 flex-1">
 
-            <p className="text-sm font-black text-[#3D3732]">
+            <p className="text-[13px] font-black text-[#3D3732] sm:text-sm">
               Locked
             </p>
 
-            <p className="mt-0.5 text-[10px] leading-4 text-[#756E64]">
+            <p className="mt-0.5 text-[9px] leading-[14px] text-[#756E64] sm:text-[10px] sm:leading-4">
               Nobody new can enter until you change this setting.
             </p>
 

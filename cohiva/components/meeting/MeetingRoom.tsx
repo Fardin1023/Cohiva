@@ -1111,13 +1111,13 @@ const MeetingLobby = ({
     "requesting";
 
   return (
-    <main className="flex h-dvh w-full items-center justify-center overflow-hidden bg-[#F9F0E0] p-4 lg:p-6">
+    <main className="flex min-h-dvh w-full items-start justify-center overflow-y-auto bg-[#F9F0E0] p-2 sm:p-4 lg:h-dvh lg:items-center lg:overflow-hidden lg:p-6">
 
-      <div className="grid h-full max-h-[850px] w-full max-w-[1450px] overflow-hidden rounded-[30px] bg-[#FFF7EB] shadow-[0_30px_90px_rgba(61,55,50,0.16)] lg:grid-cols-[1.15fr_0.9fr]">
+      <div className="grid w-full max-w-[1450px] overflow-hidden rounded-[24px] bg-[#FFF7EB] shadow-[0_30px_90px_rgba(61,55,50,0.16)] sm:rounded-[30px] lg:h-full lg:max-h-[850px] lg:grid-cols-[1.15fr_0.9fr]">
 
-        <section className="relative min-h-0 overflow-hidden bg-[#302B27]">
+        <section className="relative h-[190px] min-h-[190px] overflow-hidden bg-[#302B27] sm:h-[260px] sm:min-h-[260px] lg:h-auto lg:min-h-0">
 
-          <div className="absolute left-5 top-5 z-30 rounded-full bg-[#CC3A63] px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-white">
+          <div className="absolute left-3 top-3 z-30 rounded-full bg-[#CC3A63] px-3 py-2 text-[9px] font-black uppercase tracking-[0.18em] text-white sm:left-5 sm:top-5 sm:px-4 sm:text-[10px]">
             Cohiva Preview
           </div>
 
@@ -1130,11 +1130,11 @@ const MeetingLobby = ({
 
               <div className="text-center">
 
-                <div className="text-5xl">
+                <div className="text-4xl sm:text-5xl">
                   📷
                 </div>
 
-                <p className="mt-4 text-xl font-black text-white">
+                <p className="mt-2 text-base font-black text-white sm:mt-4 sm:text-xl">
                   Camera is off
                 </p>
 
@@ -1145,15 +1145,15 @@ const MeetingLobby = ({
 
         </section>
 
-        <section className="flex min-h-0 flex-col overflow-y-auto p-6 lg:p-8">
+        <section className="flex min-h-0 flex-col p-4 sm:p-6 lg:overflow-y-auto lg:p-8">
 
-          <div className="my-auto">
+          <div className="my-0 lg:my-auto">
 
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#A2AB73]">
               Ready to meet?
             </p>
 
-            <h1 className="mt-2 text-3xl font-black text-[#3D3732]">
+            <h1 className="mt-1.5 text-2xl font-black leading-tight text-[#3D3732] sm:mt-2 sm:text-3xl">
               {teacher
                 ? "Start your classroom ✨"
                 : "Join the classroom ✨"}
@@ -1187,7 +1187,7 @@ const MeetingLobby = ({
             )}
 
             {teacher && (
-              <div className="mt-5">
+              <div className="mt-3 sm:mt-5">
 
                 <MeetingAccessSettings
                   callId={
@@ -1198,14 +1198,14 @@ const MeetingLobby = ({
               </div>
             )}
 
-            <div className="mt-5 grid grid-cols-2 gap-3">
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3">
 
               <button
                 type="button"
                 onClick={() =>
                   void toggleCamera()
                 }
-                className="rounded-2xl bg-[#F9F0E0] p-4 text-sm font-bold text-[#3D3732]"
+                className="rounded-2xl bg-[#F9F0E0] p-3 text-xs font-bold text-[#3D3732] sm:p-4 sm:text-sm"
               >
                 <span className="mb-1 block text-xl">
                   {cameraOff
@@ -1223,7 +1223,7 @@ const MeetingLobby = ({
                 onClick={() =>
                   void toggleMicrophone()
                 }
-                className="rounded-2xl bg-[#F9F0E0] p-4 text-sm font-bold text-[#3D3732]"
+                className="rounded-2xl bg-[#F9F0E0] p-3 text-xs font-bold text-[#3D3732] sm:p-4 sm:text-sm"
               >
                 <span className="mb-1 block text-xl">
                   {microphoneOff
@@ -1285,7 +1285,7 @@ const MeetingLobby = ({
                   callingState ===
                     CallingState.JOINING
                 }
-                className="mt-5 w-full rounded-2xl bg-[#CC3A63] px-5 py-3.5 font-black text-white disabled:opacity-50"
+                className="mt-3 w-full rounded-2xl bg-[#CC3A63] px-5 py-3 font-black text-white disabled:opacity-50 sm:mt-5 sm:py-3.5"
               >
                 {requesting
                   ? "Please wait..."
@@ -1309,7 +1309,7 @@ const MeetingLobby = ({
               onClick={() =>
                 void copyInvite()
               }
-              className="mt-2 w-full rounded-2xl bg-[#F9F0E0] px-5 py-3 text-sm font-bold text-[#3D3732]"
+              className="mt-2 w-full rounded-2xl bg-[#F9F0E0] px-5 py-2.5 text-sm font-bold text-[#3D3732] sm:py-3"
             >
               {copied
                 ? "✓ Link copied"
@@ -1323,7 +1323,7 @@ const MeetingLobby = ({
                   "/"
                 )
               }
-              className="mt-4 w-full text-xs font-bold text-[#756E64]"
+              className="mt-3 w-full pb-1 text-xs font-bold text-[#756E64] sm:mt-4 sm:pb-0"
             >
               ← Back to dashboard
             </button>
