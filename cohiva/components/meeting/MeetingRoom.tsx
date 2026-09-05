@@ -2,10 +2,15 @@
 
 import {
   CallingState,
-  CallControls,
+  CancelCallButton,
+  ReactionsButton,
+  ScreenShareButton,
   SpeakerLayout,
+  SpeakingWhileMutedNotification,
   StreamCall,
   StreamTheme,
+  ToggleAudioPublishingButton,
+  ToggleVideoPublishingButton,
   VideoPreview,
   useCall,
   useCallStateHooks,
@@ -141,9 +146,7 @@ const MeetingRoom = ({
   const client =
     useStreamVideoClient();
 
-  const {
-    user,
-  } =
+  const { user } =
     useUser();
 
   const userId =
@@ -279,11 +282,6 @@ const MeetingRoom = ({
     let cancelled =
       false;
 
-    /*
-     * Reuse the exact same Stream call
-     * on ordinary React rerenders.
-     */
-
     if (
       callRef.current &&
       callIdRef.current ===
@@ -297,10 +295,6 @@ const MeetingRoom = ({
 
       return;
     }
-
-    /*
-     * Clean up a previous different call.
-     */
 
     const previousCall =
       callRef.current;
@@ -511,8 +505,6 @@ export default MeetingRoom;
 
 /* =========================================================
    MEETING EXPERIENCE
-
-   Either lobby OR live meeting.
 ========================================================= */
 
 const MeetingExperience = ({
@@ -974,8 +966,6 @@ const MeetingLobby = ({
       try {
         setError("");
 
-        /* LOCKED */
-
         if (
           accessMode ===
           "locked"
@@ -986,8 +976,6 @@ const MeetingLobby = ({
 
           return;
         }
-
-        /* OPEN */
 
         if (
           accessMode ===
@@ -1003,8 +991,6 @@ const MeetingLobby = ({
 
           return;
         }
-
-        /* APPROVAL */
 
         setAccessStatus(
           "requesting"
@@ -1777,8 +1763,6 @@ const LiveMeeting = ({
         );
       };
 
-    /* JOIN */
-
     void postAttendance(
       "join"
     ).catch(
@@ -1791,8 +1775,6 @@ const LiveMeeting = ({
         );
       }
     );
-
-    /* HEARTBEAT */
 
     const heartbeatTimer =
       window.setInterval(
@@ -1812,8 +1794,6 @@ const LiveMeeting = ({
         },
         20_000
       );
-
-    /* PAGE CLOSE */
 
     const handlePageHide =
       () => {
@@ -2356,7 +2336,7 @@ const LiveMeeting = ({
   ]);
 
   /* =====================================================
-     REMOVE STALE RAISED HAND WHEN PARTICIPANT LEAVES
+     REMOVE STALE HAND
   ===================================================== */
 
   useEffect(() => {
@@ -2432,8 +2412,6 @@ const LiveMeeting = ({
 
   /* =====================================================
      TEACHER ENDED CALL
-
-     ONLY call.ended.
   ===================================================== */
 
   useEffect(() => {
@@ -2701,8 +2679,6 @@ const LiveMeeting = ({
         const key =
           event.key.toLowerCase();
 
-        /* ALT + M */
-
         if (
           key ===
           "m"
@@ -2716,8 +2692,6 @@ const LiveMeeting = ({
             );
         }
 
-        /* ALT + V */
-
         if (
           key ===
           "v"
@@ -2730,8 +2704,6 @@ const LiveMeeting = ({
               () => {}
             );
         }
-
-        /* ALT + C */
 
         if (
           key ===
@@ -2747,8 +2719,6 @@ const LiveMeeting = ({
           );
         }
 
-        /* ALT + P */
-
         if (
           key ===
           "p"
@@ -2763,8 +2733,6 @@ const LiveMeeting = ({
           );
         }
 
-        /* ALT + H */
-
         if (
           key ===
           "h"
@@ -2773,8 +2741,6 @@ const LiveMeeting = ({
 
           void toggleHand();
         }
-
-        /* ALT + W */
 
         if (
           key ===
@@ -2792,8 +2758,6 @@ const LiveMeeting = ({
                 : "video"
           );
         }
-
-        /* ALT + A */
 
         if (
           key ===
@@ -2892,9 +2856,7 @@ const LiveMeeting = ({
       }`}
     >
 
-      {/* =================================================
-          REDUCED MOTION
-      ================================================= */}
+      {/* REDUCED MOTION */}
 
       {accessibility.reduceMotion && (
         <style>
@@ -2911,9 +2873,7 @@ const LiveMeeting = ({
         </style>
       )}
 
-      {/* =================================================
-          SCREEN READER ANNOUNCEMENTS
-      ================================================= */}
+      {/* SCREEN READER */}
 
       <div
         className="sr-only"
@@ -2925,12 +2885,6 @@ const LiveMeeting = ({
 
       {/* =================================================
           RECORDING
-
-          Indicator:
-          visible to everyone.
-
-          Events:
-          teacher receives ready/error messages.
       ================================================= */}
 
       <CohivaRecordingIndicator />
@@ -3301,11 +3255,7 @@ const LiveMeeting = ({
             </button>
           )}
 
-          {/* =================================================
-              RECORDING
-
-              Teacher only.
-          ================================================= */}
+          {/* RECORDING - TEACHER ONLY */}
 
           {teacher && (
             <CohivaRecordingControl />
@@ -3541,9 +3491,7 @@ const LiveMeeting = ({
 
           </div>
 
-          {/* =================================================
-              CAPTIONS
-          ================================================= */}
+          {/* CAPTIONS */}
 
           <MeetingCaptionsOverlay
             visible={
@@ -3554,9 +3502,7 @@ const LiveMeeting = ({
             }
           />
 
-          {/* =================================================
-              REACTIONS
-          ================================================= */}
+          {/* REACTIONS */}
 
           {!accessibility.hideReactions && (
             <div className="pointer-events-none absolute inset-x-0 bottom-6 z-[80] flex flex-col items-center gap-2">
@@ -3590,33 +3536,69 @@ const LiveMeeting = ({
       </section>
 
       {/* =================================================
-          STREAM CALL CONTROLS
+          CUSTOM STREAM CALL CONTROLS
+
+          IMPORTANT:
+          RecordCallButton is intentionally NOT included.
+
+          This removes Stream's recording button / recording
+          indicator from the bottom bar for BOTH teacher and
+          students.
+
+          Recording is controlled only from Cohiva's
+          teacher-only button in the header.
       ================================================= */}
 
       <footer className="flex h-[76px] shrink-0 items-center justify-center overflow-hidden border-t border-white/10 bg-[#302B27] px-3">
 
         <div className="max-w-full scale-[0.92] sm:scale-100">
 
-          <CallControls
-            onLeave={(
-              leaveError
-            ) => {
-              if (
+          <div className="str-video__call-controls">
+
+            {/* MICROPHONE */}
+
+            <SpeakingWhileMutedNotification>
+
+              <ToggleAudioPublishingButton />
+
+            </SpeakingWhileMutedNotification>
+
+            {/* CAMERA */}
+
+            <ToggleVideoPublishingButton />
+
+            {/* REACTIONS */}
+
+            <ReactionsButton />
+
+            {/* SCREEN SHARE */}
+
+            <ScreenShareButton />
+
+            {/* LEAVE */}
+
+            <CancelCallButton
+              onLeave={(
                 leaveError
-              ) {
-                console.error(
-                  "Leave call error:",
+              ) => {
+                if (
                   leaveError
+                ) {
+                  console.error(
+                    "Leave call error:",
+                    leaveError
+                  );
+
+                  return;
+                }
+
+                router.replace(
+                  "/"
                 );
+              }}
+            />
 
-                return;
-              }
-
-              router.replace(
-                "/"
-              );
-            }}
-          />
+          </div>
 
         </div>
 

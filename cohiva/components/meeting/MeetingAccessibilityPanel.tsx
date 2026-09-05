@@ -8,6 +8,7 @@ import {
 
 import {
   useEffect,
+  useRef,
   useState,
 } from "react";
 
@@ -35,18 +36,24 @@ type MeetingAccessibilityPanelProps = {
 
   onClose: () => void;
 
-  settings:
-    AccessibilitySettings;
+  settings: AccessibilitySettings;
 
-  onChange:
-    (
-      settings:
-        AccessibilitySettings
-    ) => void;
+  onChange: (
+    settings: AccessibilitySettings
+  ) => void;
+};
+
+type CaptionToast = {
+  title: string;
+  message: string;
+  type:
+    | "success"
+    | "info"
+    | "error";
 };
 
 /* =========================================================
-   UPDATE HELPER
+   SETTING SWITCH
 ========================================================= */
 
 const SettingSwitch = ({
@@ -58,10 +65,9 @@ const SettingSwitch = ({
 }: {
   enabled: boolean;
 
-  onChange:
-    (
-      enabled: boolean
-    ) => void;
+  onChange: (
+    enabled: boolean
+  ) => void;
 
   title: string;
 
@@ -73,20 +79,22 @@ const SettingSwitch = ({
     <button
       type="button"
       role="switch"
-      aria-checked={
-        enabled
-      }
+      aria-checked={enabled}
       onClick={() =>
         onChange(
           !enabled
         )
       }
-      className="flex w-full items-center gap-3 rounded-[16px] border border-[#403A35]/8 bg-white p-3 text-left transition hover:bg-[#F9F0E0]"
+      className="flex w-full items-center gap-3 rounded-[17px] border border-[#403A35]/10 bg-white p-3.5 text-left transition hover:bg-[#F9F0E0]"
     >
 
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F9F0E0] text-lg">
+      {/* ICON */}
+
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-[#F9F0E0] text-base font-black text-[#403A35]">
         {icon}
       </div>
+
+      {/* TEXT */}
 
       <div className="min-w-0 flex-1">
 
@@ -100,6 +108,8 @@ const SettingSwitch = ({
 
       </div>
 
+      {/* SWITCH */}
+
       <div
         className={`relative h-6 w-11 shrink-0 rounded-full transition ${
           enabled
@@ -107,13 +117,15 @@ const SettingSwitch = ({
             : "bg-[#403A35]/15"
         }`}
       >
+
         <div
-          className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition ${
+          className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${
             enabled
               ? "left-6"
               : "left-1"
           }`}
         />
+
       </div>
 
     </button>
@@ -121,7 +133,7 @@ const SettingSwitch = ({
 };
 
 /* =========================================================
-   PANEL
+   ACCESSIBILITY PANEL
 ========================================================= */
 
 const MeetingAccessibilityPanel = ({
@@ -139,17 +151,22 @@ const MeetingAccessibilityPanel = ({
   } =
     useCallStateHooks();
 
-  const captionEngineRunning =
+  const captionsRunning =
     useIsCallCaptioningInProgress();
 
-  const canStartCaptions =
+  /*
+   * Stream checks that the current participant has
+   * BOTH capabilities.
+   */
+  const canToggleCaptions =
     useHasPermissions(
-      OwnCapability.START_CLOSED_CAPTIONS_CALL
+      OwnCapability.START_CLOSED_CAPTIONS_CALL,
+      OwnCapability.STOP_CLOSED_CAPTIONS_CALL
     );
 
-  const canStopCaptions =
-    useHasPermissions(
-      OwnCapability.STOP_CLOSED_CAPTIONS_CALL
+  const teacher =
+    Boolean(
+      call?.isCreatedByMe
     );
 
   const [
@@ -164,18 +181,29 @@ const MeetingAccessibilityPanel = ({
   ] =
     useState("");
 
-  const teacher =
-    Boolean(
-      call?.isCreatedByMe
+  const [
+    captionToast,
+    setCaptionToast,
+  ] =
+    useState<CaptionToast | null>(
+      null
     );
 
+  const toastTimerRef =
+    useRef<
+      ReturnType<
+        typeof setTimeout
+      > | null
+    >(null);
+
   /* =====================================================
-     UPDATE LOCAL ACCESSIBILITY PREFERENCE
+     UPDATE LOCAL SETTINGS
   ===================================================== */
 
   const update =
-    <K extends
-      keyof AccessibilitySettings>(
+    <
+      K extends keyof AccessibilitySettings
+    >(
       key: K,
       value:
         AccessibilitySettings[K]
@@ -189,13 +217,44 @@ const MeetingAccessibilityPanel = ({
     };
 
   /* =====================================================
-     CAPTION ENGINE
+     TOAST
+  ===================================================== */
 
-     Teacher controls whether Stream generates captions
-     for the entire meeting.
+  const showToast = (
+    toast: CaptionToast
+  ) => {
+    if (
+      toastTimerRef.current
+    ) {
+      clearTimeout(
+        toastTimerRef.current
+      );
+    }
 
-     Each participant separately chooses whether they
-     personally display them.
+    setCaptionToast(
+      toast
+    );
+
+    toastTimerRef.current =
+      setTimeout(
+        () => {
+          setCaptionToast(
+            null
+          );
+
+          toastTimerRef.current =
+            null;
+        },
+        4500
+      );
+  };
+
+  /* =====================================================
+     START / STOP CAPTIONS
+
+     This affects the WHOLE Stream call.
+
+     Showing/hiding captions remains a LOCAL user choice.
   ===================================================== */
 
   const toggleCaptionEngine =
@@ -215,30 +274,59 @@ const MeetingAccessibilityPanel = ({
         setCaptionError("");
 
         if (
-          captionEngineRunning
+          !canToggleCaptions
         ) {
-          if (
-            !canStopCaptions
-          ) {
-            throw new Error(
-              "Your Stream role cannot stop closed captions."
-            );
-          }
+          throw new Error(
+            "Your Stream role does not have permission to control closed captions."
+          );
+        }
 
-          await call.stopClosedCaptions();
+        /* STOP */
+
+        if (
+          captionsRunning
+        ) {
+          await call
+            .stopClosedCaptions();
+
+          showToast({
+            type:
+              "info",
+
+            title:
+              "Captions stopped",
+
+            message:
+              "Live captions have been stopped for this classroom.",
+          });
 
           return;
         }
 
-        if (
-          !canStartCaptions
-        ) {
-          throw new Error(
-            "Your Stream role cannot start closed captions."
-          );
-        }
+        /* START */
 
-        await call.startClosedCaptions();
+        await call
+          .startClosedCaptions();
+
+        /*
+         * Teacher who starts captions should
+         * immediately see them locally.
+         */
+        update(
+          "captionsVisible",
+          true
+        );
+
+        showToast({
+          type:
+            "success",
+
+          title:
+            "Captions started",
+
+          message:
+            "Live speech captions are now available to everyone in the meeting.",
+        });
       } catch (
         error
       ) {
@@ -247,12 +335,25 @@ const MeetingAccessibilityPanel = ({
           error
         );
 
-        setCaptionError(
+        const message =
           error instanceof
             Error
             ? error.message
-            : "Unable to change closed captioning."
+            : "Unable to change closed captions.";
+
+        setCaptionError(
+          message
         );
+
+        showToast({
+          type:
+            "error",
+
+          title:
+            "Captions unavailable",
+
+          message,
+        });
       } finally {
         setCaptionsBusy(
           false
@@ -260,134 +361,277 @@ const MeetingAccessibilityPanel = ({
       }
     };
 
+  /* =====================================================
+     ESC CLOSE
+  ===================================================== */
+
+  useEffect(() => {
+    if (
+      !open
+    ) {
+      return;
+    }
+
+    const handleKeyDown = (
+      event: KeyboardEvent
+    ) => {
+      if (
+        event.key ===
+        "Escape"
+      ) {
+        onClose();
+      }
+    };
+
+    window.addEventListener(
+      "keydown",
+      handleKeyDown
+    );
+
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleKeyDown
+      );
+    };
+  }, [
+    open,
+    onClose,
+  ]);
+
+  /* =====================================================
+     TIMER CLEANUP
+  ===================================================== */
+
+  useEffect(() => {
+    return () => {
+      if (
+        toastTimerRef.current
+      ) {
+        clearTimeout(
+          toastTimerRef.current
+        );
+      }
+    };
+  }, []);
+
   if (
     !open
   ) {
-    return null;
+    return (
+      <>
+        {captionToast && (
+          <CaptionNotification
+            toast={
+              captionToast
+            }
+            onClose={() =>
+              setCaptionToast(
+                null
+              )
+            }
+          />
+        )}
+      </>
+    );
   }
 
+  /* =====================================================
+     UI
+  ===================================================== */
+
   return (
-    <aside
-      aria-label="Accessibility settings"
-      className="fixed bottom-[76px] right-0 top-[64px] z-[250] flex w-full flex-col overflow-hidden border-l border-[#403A35]/10 bg-[#FFF7EB] text-[#3D3732] shadow-[-18px_0_55px_rgba(0,0,0,0.2)] sm:w-[430px]"
-    >
-
-      {/* =================================================
-          HEADER
-      ================================================= */}
-
-      <header className="shrink-0 border-b border-[#403A35]/10 bg-white p-4">
-
-        <div className="flex items-start justify-between">
-
-          <div>
-
-            <p className="text-[9px] font-black uppercase tracking-[0.18em] text-[#CC3A63]">
-              Cohiva
-            </p>
-
-            <h2 className="mt-1 text-lg font-black">
-              Accessibility
-            </h2>
-
-            <p className="mt-1 text-[10px] text-[#756E64]">
-              Personalize the meeting for comfort and clarity.
-            </p>
-
-          </div>
-
-          <button
-            type="button"
-            aria-label="Close accessibility panel"
-            onClick={
-              onClose
-            }
-            className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F9F0E0] text-lg font-black"
-          >
-            ×
-          </button>
-
-        </div>
-
-      </header>
-
-      {/* =================================================
-          CONTENT
-      ================================================= */}
-
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+    <>
+      <aside
+        aria-label="Accessibility settings"
+        className="fixed bottom-[76px] right-0 top-[64px] z-[300] flex w-full flex-col overflow-hidden border-l border-[#403A35]/10 bg-[#FFF7EB] text-[#3D3732] shadow-[-20px_0_60px_rgba(0,0,0,0.25)] sm:w-[430px]"
+      >
 
         {/* =================================================
-            CLOSED CAPTIONS
+            HEADER
         ================================================= */}
 
-        <section>
+        <header className="shrink-0 border-b border-[#403A35]/10 bg-white p-5">
 
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex items-start justify-between gap-4">
 
             <div>
 
-              <p className="text-[9px] font-black uppercase tracking-[0.16em] text-[#CC3A63]">
-                Closed Captions
+              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-[#CC3A63]">
+                Cohiva Classroom
               </p>
 
-              <p className="mt-1 text-xs font-bold text-[#756E64]">
-                Live spoken subtitles
+              <h2 className="mt-1 text-xl font-black">
+                Accessibility
+              </h2>
+
+              <p className="mt-1 text-[10px] leading-4 text-[#756E64]">
+                Personalize your classroom experience.
               </p>
 
             </div>
 
-            <span
-              className={`rounded-full px-2.5 py-1 text-[8px] font-black uppercase ${
-                captionEngineRunning
-                  ? "bg-[#A2AB73]/15 text-[#737C4C]"
-                  : "bg-[#403A35]/8 text-[#756E64]"
-              }`}
+            <button
+              type="button"
+              aria-label="Close accessibility settings"
+              onClick={
+                onClose
+              }
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F9F0E0] text-lg font-black text-[#756E64] transition hover:bg-[#EFE4D2]"
             >
-              {captionEngineRunning
-                ? "Running"
-                : "Off"}
-            </span>
+              ×
+            </button>
 
           </div>
 
-          {/* TEACHER ENGINE CONTROL */}
+        </header>
 
-          {teacher && (
-            <button
-              type="button"
-              disabled={
-                captionsBusy
-              }
-              onClick={() =>
-                void toggleCaptionEngine()
-              }
-              className={`mt-3 w-full rounded-[14px] px-4 py-3 text-[10px] font-black transition disabled:opacity-50 ${
-                captionEngineRunning
-                  ? "bg-[#CC3A63]/10 text-[#CC3A63]"
-                  : "bg-[#A2AB73] text-white"
-              }`}
-            >
-              {captionsBusy
-                ? "Please wait..."
-                : captionEngineRunning
-                  ? "Stop captions for class"
-                  : "Start captions for class"}
-            </button>
-          )}
+        {/* =================================================
+            CONTENT
+        ================================================= */}
 
-          {/* STUDENT INFO */}
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
 
-          {!teacher &&
-            !captionEngineRunning && (
-            <div className="mt-3 rounded-xl bg-[#F9F0E0] p-3 text-[9px] leading-4 text-[#756E64]">
-              Closed captions are not currently running for this meeting. The teacher can start them.
+          {/* =================================================
+              CAPTIONS
+          ================================================= */}
+
+          <section className="rounded-[22px] border border-[#403A35]/10 bg-white p-4">
+
+            <div className="flex items-start justify-between gap-3">
+
+              <div>
+
+                <p className="text-[9px] font-black uppercase tracking-[0.16em] text-[#CC3A63]">
+                  Live Captions
+                </p>
+
+                <h3 className="mt-1 text-sm font-black">
+                  Closed captions
+                </h3>
+
+                <p className="mt-1 text-[9px] leading-4 text-[#756E64]">
+                  Convert spoken audio into live text during the meeting.
+                </p>
+
+              </div>
+
+              {/* STATUS */}
+
+              <span
+                className={`shrink-0 rounded-full px-3 py-1.5 text-[8px] font-black uppercase tracking-[0.08em] ${
+                  captionsRunning
+                    ? "bg-[#A2AB73]/15 text-[#737C4C]"
+                    : "bg-[#403A35]/8 text-[#756E64]"
+                }`}
+              >
+                {captionsRunning
+                  ? "● Live"
+                  : "Off"}
+              </span>
+
             </div>
-          )}
 
-          {/* LOCAL DISPLAY */}
+            {/* =============================================
+                TEACHER CAPTION ENGINE CONTROL
+            ============================================= */}
 
-          <div className="mt-3">
+            {teacher && (
+              <div className="mt-4">
+
+                <button
+                  type="button"
+                  disabled={
+                    captionsBusy ||
+                    !canToggleCaptions
+                  }
+                  onClick={() =>
+                    void toggleCaptionEngine()
+                  }
+                  className={`w-full rounded-[15px] px-4 py-3 text-[10px] font-black transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                    captionsRunning
+                      ? "bg-[#CC3A63]/10 text-[#CC3A63] hover:bg-[#CC3A63]/15"
+                      : "bg-[#A2AB73] text-white hover:bg-[#929C64]"
+                  }`}
+                >
+                  {captionsBusy
+                    ? "Please wait..."
+                    : captionsRunning
+                      ? "Stop captions for class"
+                      : "Start captions for class"}
+                </button>
+
+                {!canToggleCaptions && (
+                  <div className="mt-3 rounded-xl bg-[#F9F0E0] p-3">
+
+                    <p className="text-[9px] font-bold leading-4 text-[#756E64]">
+                      Closed captions are not enabled for your Stream role or call type.
+                    </p>
+
+                  </div>
+                )}
+
+              </div>
+            )}
+
+            {/* =============================================
+                STUDENT STATUS
+            ============================================= */}
+
+            {!teacher && (
+              <div
+                className={`mt-4 rounded-[14px] p-3 ${
+                  captionsRunning
+                    ? "bg-[#A2AB73]/10"
+                    : "bg-[#F9F0E0]"
+                }`}
+              >
+
+                <p className="text-[9px] font-bold leading-4 text-[#756E64]">
+                  {captionsRunning
+                    ? "Live captions are available. Choose below whether you want to display them on your screen."
+                    : "Captions are currently off. The teacher can start live captions for the classroom."}
+                </p>
+
+              </div>
+            )}
+
+            {/* ERROR */}
+
+            {captionError && (
+              <div
+                role="alert"
+                className="mt-3 flex items-start gap-2 rounded-[14px] bg-[#CC3A63]/10 p-3"
+              >
+
+                <span className="font-black text-[#CC3A63]">
+                  !
+                </span>
+
+                <p className="flex-1 text-[9px] font-bold leading-4 text-[#CC3A63]">
+                  {captionError}
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCaptionError("")
+                  }
+                  className="text-xs font-black text-[#CC3A63]"
+                >
+                  ×
+                </button>
+
+              </div>
+            )}
+
+          </section>
+
+          {/* =================================================
+              PERSONAL CAPTION DISPLAY
+          ================================================= */}
+
+          <section className="mt-3">
 
             <SettingSwitch
               enabled={
@@ -403,30 +647,27 @@ const MeetingAccessibilityPanel = ({
               }
               title="Show captions for me"
               description={
-                captionEngineRunning
-                  ? "Show or hide live captions on your screen."
-                  : "Your preference is saved. Captions will appear when the meeting caption engine is running."
+                captionsRunning
+                  ? "Show or hide live subtitles on your own screen."
+                  : "Your choice will be remembered until captions become available."
               }
               icon="CC"
             />
 
-          </div>
+          </section>
 
-          {captionError && (
-            <div
-              role="alert"
-              className="mt-3 rounded-xl bg-[#CC3A63]/10 p-3 text-[9px] font-bold leading-4 text-[#CC3A63]"
-            >
-              {captionError}
-            </div>
-          )}
+          {/* =================================================
+              CAPTION SIZE
+          ================================================= */}
 
-          {/* CAPTION SIZE */}
-
-          <div className="mt-3 rounded-[16px] border border-[#403A35]/8 bg-white p-3">
+          <section className="mt-3 rounded-[17px] border border-[#403A35]/10 bg-white p-4">
 
             <p className="text-xs font-black">
-              Caption size
+              Caption text size
+            </p>
+
+            <p className="mt-1 text-[9px] text-[#756E64]">
+              Choose a comfortable subtitle size.
             </p>
 
             <div className="mt-3 grid grid-cols-3 gap-2">
@@ -452,11 +693,11 @@ const MeetingAccessibilityPanel = ({
                         size
                       )
                     }
-                    className={`rounded-xl px-2 py-2 text-[9px] font-black capitalize transition ${
+                    className={`rounded-xl px-2 py-2.5 text-[9px] font-black capitalize transition ${
                       settings.captionSize ===
                       size
-                        ? "bg-[#A2AB73] text-white"
-                        : "bg-[#F9F0E0] text-[#756E64]"
+                        ? "bg-[#403A35] text-white"
+                        : "bg-[#F9F0E0] text-[#756E64] hover:bg-[#EFE4D2]"
                     }`}
                   >
                     {size}
@@ -466,142 +707,177 @@ const MeetingAccessibilityPanel = ({
 
             </div>
 
-          </div>
+          </section>
 
-        </section>
+          {/* =================================================
+              VISUAL SETTINGS
+          ================================================= */}
 
-        {/* DIVIDER */}
+          <section className="mt-5">
 
-        <div className="my-5 h-px bg-[#403A35]/10" />
+            <div className="mb-3">
 
-        {/* =================================================
-            VISUAL ACCESSIBILITY
-        ================================================= */}
+              <p className="text-[9px] font-black uppercase tracking-[0.16em] text-[#CC3A63]">
+                Visual Comfort
+              </p>
 
-        <section>
+              <p className="mt-1 text-[9px] text-[#756E64]">
+                These settings only affect your screen.
+              </p>
 
-          <p className="mb-3 text-[9px] font-black uppercase tracking-[0.16em] text-[#CC3A63]">
-            Visual Preferences
-          </p>
+            </div>
 
-          <div className="space-y-2.5">
+            <div className="space-y-2.5">
 
-            <SettingSwitch
-              enabled={
-                settings.highContrast
-              }
-              onChange={(
-                enabled
-              ) =>
-                update(
-                  "highContrast",
+              <SettingSwitch
+                enabled={
+                  settings.highContrast
+                }
+                onChange={(
                   enabled
-                )
-              }
-              title="High contrast"
-              description="Increase visual separation and interface contrast."
-              icon="◐"
-            />
+                ) =>
+                  update(
+                    "highContrast",
+                    enabled
+                  )
+                }
+                title="High contrast"
+                description="Increase visual separation between interface elements."
+                icon="◐"
+              />
 
-            <SettingSwitch
-              enabled={
-                settings.reduceMotion
-              }
-              onChange={(
-                enabled
-              ) =>
-                update(
-                  "reduceMotion",
+              <SettingSwitch
+                enabled={
+                  settings.reduceMotion
+                }
+                onChange={(
                   enabled
-                )
-              }
-              title="Reduce motion"
-              description="Minimize animations and interface movement."
-              icon="◌"
-            />
+                ) =>
+                  update(
+                    "reduceMotion",
+                    enabled
+                  )
+                }
+                title="Reduce motion"
+                description="Minimize animations and visual movement."
+                icon="◌"
+              />
 
-            <SettingSwitch
-              enabled={
-                settings.hideReactions
-              }
-              onChange={(
-                enabled
-              ) =>
-                update(
-                  "hideReactions",
+              <SettingSwitch
+                enabled={
+                  settings.hideReactions
+                }
+                onChange={(
                   enabled
-                )
-              }
-              title="Hide reactions"
-              description="Hide floating emoji reactions from your screen."
-              icon="😀"
-            />
+                ) =>
+                  update(
+                    "hideReactions",
+                    enabled
+                  )
+                }
+                title="Hide reactions"
+                description="Hide floating emoji reactions from your meeting view."
+                icon="😀"
+              />
 
-          </div>
+            </div>
 
-        </section>
+          </section>
 
-        {/* =================================================
-            KEYBOARD SHORTCUTS
-        ================================================= */}
+          {/* =================================================
+              KEYBOARD SHORTCUTS
+          ================================================= */}
 
-        <section className="mt-5 rounded-[18px] bg-[#403A35] p-4 text-white">
+          <section className="mt-5 rounded-[20px] bg-[#403A35] p-4 text-white">
 
-          <p className="text-[9px] font-black uppercase tracking-[0.16em] text-[#D9E2AE]">
-            Keyboard Shortcuts
-          </p>
+            <div className="flex items-center justify-between">
 
-          <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[9px]">
+              <div>
 
-            <Shortcut
-              keys="Alt + M"
-              label="Microphone"
-            />
+                <p className="text-[9px] font-black uppercase tracking-[0.16em] text-[#D9E2AE]">
+                  Keyboard
+                </p>
 
-            <Shortcut
-              keys="Alt + V"
-              label="Camera"
-            />
+                <h3 className="mt-1 text-xs font-black">
+                  Meeting shortcuts
+                </h3>
 
-            <Shortcut
-              keys="Alt + C"
-              label="Chat"
-            />
+              </div>
 
-            <Shortcut
-              keys="Alt + P"
-              label="Participants"
-            />
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10">
+                ⌨
+              </div>
 
-            <Shortcut
-              keys="Alt + H"
-              label="Raise hand"
-            />
+            </div>
 
-            <Shortcut
-              keys="Alt + W"
-              label="Whiteboard"
-            />
+            <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-2.5">
 
-            <Shortcut
-              keys="Alt + A"
-              label="Accessibility"
-            />
+              <Shortcut
+                keys="Alt + M"
+                label="Microphone"
+              />
 
-          </div>
+              <Shortcut
+                keys="Alt + V"
+                label="Camera"
+              />
 
-        </section>
+              <Shortcut
+                keys="Alt + C"
+                label="Chat"
+              />
 
-      </div>
+              <Shortcut
+                keys="Alt + P"
+                label="Participants"
+              />
 
-    </aside>
+              <Shortcut
+                keys="Alt + H"
+                label="Raise hand"
+              />
+
+              <Shortcut
+                keys="Alt + W"
+                label="Whiteboard"
+              />
+
+              <Shortcut
+                keys="Alt + A"
+                label="Accessibility"
+              />
+
+            </div>
+
+          </section>
+
+        </div>
+
+      </aside>
+
+      {/* TOAST */}
+
+      {captionToast && (
+        <CaptionNotification
+          toast={
+            captionToast
+          }
+          onClose={() =>
+            setCaptionToast(
+              null
+            )
+          }
+        />
+      )}
+
+    </>
   );
 };
 
 export default MeetingAccessibilityPanel;
 
 /* =========================================================
-   SHORTCUT
+   SHORTCUT ROW
 ========================================================= */
 
 const Shortcut = ({
@@ -614,11 +890,11 @@ const Shortcut = ({
   return (
     <div className="flex items-center justify-between gap-2">
 
-      <span className="text-white/65">
+      <span className="text-[9px] text-white/65">
         {label}
       </span>
 
-      <kbd className="rounded-md bg-white/10 px-2 py-1 font-black text-white">
+      <kbd className="rounded-md bg-white/10 px-2 py-1 text-[8px] font-black text-white">
         {keys}
       </kbd>
 
@@ -627,7 +903,88 @@ const Shortcut = ({
 };
 
 /* =========================================================
-   CLOSED CAPTION OVERLAY
+   CAPTION NOTIFICATION
+========================================================= */
+
+const CaptionNotification = ({
+  toast,
+  onClose,
+}: {
+  toast: CaptionToast;
+
+  onClose: () => void;
+}) => {
+  return (
+    <div className="fixed bottom-[96px] right-5 z-[480] w-[350px] max-w-[calc(100vw-32px)]">
+
+      <div className="overflow-hidden rounded-[22px] border border-[#403A35]/10 bg-[#FFF7EB] text-[#3D3732] shadow-[0_24px_70px_rgba(0,0,0,0.38)]">
+
+        <div
+          className={`h-1 ${
+            toast.type ===
+            "error"
+              ? "bg-[#CC3A63]"
+              : toast.type ===
+                  "success"
+                ? "bg-[#A2AB73]"
+                : "bg-[#403A35]"
+          }`}
+        />
+
+        <div className="flex items-start gap-3 p-4">
+
+          <div
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl font-black ${
+              toast.type ===
+              "error"
+                ? "bg-[#CC3A63]/10 text-[#CC3A63]"
+                : "bg-[#A2AB73]/15 text-[#737C4C]"
+            }`}
+          >
+            {toast.type ===
+            "error"
+              ? "!"
+              : "CC"}
+          </div>
+
+          <div className="min-w-0 flex-1">
+
+            <p className="text-[9px] font-black uppercase tracking-[0.15em] text-[#CC3A63]">
+              Cohiva Accessibility
+            </p>
+
+            <h3 className="mt-1 text-sm font-black">
+              {toast.title}
+            </h3>
+
+            <p className="mt-1 text-[10px] leading-4 text-[#756E64]">
+              {toast.message}
+            </p>
+
+          </div>
+
+          <button
+            type="button"
+            onClick={
+              onClose
+            }
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm font-black text-[#756E64] hover:bg-[#F9F0E0]"
+          >
+            ×
+          </button>
+
+        </div>
+
+      </div>
+
+    </div>
+  );
+};
+
+/* =========================================================
+   CAPTION OVERLAY
+
+   Rendered inside MeetingRoom workspace.
 ========================================================= */
 
 export const MeetingCaptionsOverlay = ({
@@ -648,12 +1005,12 @@ export const MeetingCaptionsOverlay = ({
   const captions =
     useCallClosedCaptions();
 
-  const running =
+  const captionsRunning =
     useIsCallCaptioningInProgress();
 
   if (
     !visible ||
-    !running ||
+    !captionsRunning ||
     captions.length ===
       0
   ) {
@@ -673,7 +1030,7 @@ export const MeetingCaptionsOverlay = ({
     <div
       aria-live="polite"
       aria-atomic="false"
-      className="pointer-events-none absolute inset-x-4 bottom-5 z-[100] flex flex-col items-center gap-2"
+      className="pointer-events-none absolute inset-x-4 bottom-5 z-[120] flex flex-col items-center gap-2"
     >
 
       {captions.map(
@@ -681,20 +1038,23 @@ export const MeetingCaptionsOverlay = ({
           caption
         ) => {
           const speaker =
-            caption.user
-              ?.name ||
+            caption.user?.name ||
             "Participant";
 
           return (
             <div
               key={`${caption.user?.id ?? "unknown"}-${caption.start_time}`}
-              className={`max-w-[900px] rounded-[14px] bg-black/80 px-4 py-2.5 text-center font-semibold leading-relaxed text-white shadow-xl backdrop-blur ${textSize}`}
+              className={`max-w-[850px] rounded-[14px] bg-black/85 px-4 py-2.5 text-center font-semibold leading-relaxed text-white shadow-2xl backdrop-blur ${textSize}`}
             >
+
               <span className="mr-2 font-black text-[#D9E2AE]">
                 {speaker}:
               </span>
 
-              {caption.text}
+              <span>
+                {caption.text}
+              </span>
+
             </div>
           );
         }

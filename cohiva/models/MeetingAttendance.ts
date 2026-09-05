@@ -1,47 +1,14 @@
-import {
+import mongoose, {
   Schema,
-  model,
   models,
 } from "mongoose";
 
-type AttendanceSession = {
-  joinedAt: Date;
-
-  leftAt?: Date | null;
-
-  durationSeconds: number;
-};
-
-export type MeetingAttendanceDocument = {
-  callId: string;
-
-  userId: string;
-
-  name: string;
-
-  image: string;
-
-  firstJoinedAt: Date;
-
-  lastJoinedAt: Date;
-
-  lastLeftAt?: Date | null;
-
-  activeSessionStartedAt?: Date | null;
-
-  lastHeartbeatAt?: Date | null;
-
-  totalSeconds: number;
-
-  joinCount: number;
-
-  isPresent: boolean;
-
-  sessions: AttendanceSession[];
-};
+/* =========================================================
+   SESSION SCHEMA
+========================================================= */
 
 const AttendanceSessionSchema =
-  new Schema<AttendanceSession>(
+  new Schema(
     {
       joinedAt: {
         type: Date,
@@ -56,7 +23,6 @@ const AttendanceSessionSchema =
       durationSeconds: {
         type: Number,
         default: 0,
-        min: 0,
       },
     },
     {
@@ -64,42 +30,43 @@ const AttendanceSessionSchema =
     }
   );
 
+/* =========================================================
+   MEETING ATTENDANCE SCHEMA
+========================================================= */
+
 const MeetingAttendanceSchema =
-  new Schema<MeetingAttendanceDocument>(
+  new Schema(
     {
       callId: {
         type: String,
         required: true,
-        trim: true,
+        index: true,
       },
 
       userId: {
         type: String,
         required: true,
-        trim: true,
+        index: true,
       },
 
       name: {
         type: String,
-        required: true,
-        trim: true,
-        maxlength: 120,
+        default: "Participant",
       },
 
       image: {
         type: String,
         default: "",
-        maxlength: 1000,
       },
 
       firstJoinedAt: {
         type: Date,
-        required: true,
+        default: null,
       },
 
       lastJoinedAt: {
         type: Date,
-        required: true,
+        default: null,
       },
 
       lastLeftAt: {
@@ -120,18 +87,16 @@ const MeetingAttendanceSchema =
       totalSeconds: {
         type: Number,
         default: 0,
-        min: 0,
       },
 
       joinCount: {
         type: Number,
-        default: 1,
-        min: 1,
+        default: 0,
       },
 
       isPresent: {
         type: Boolean,
-        default: true,
+        default: false,
       },
 
       sessions: {
@@ -144,9 +109,15 @@ const MeetingAttendanceSchema =
     },
     {
       timestamps: true,
-      versionKey: false,
     }
   );
+
+/* =========================================================
+   UNIQUE PARTICIPANT PER MEETING
+
+   Same Clerk user cannot have two documents
+   for the same meeting.
+========================================================= */
 
 MeetingAttendanceSchema.index(
   {
@@ -155,17 +126,17 @@ MeetingAttendanceSchema.index(
   },
   {
     unique: true,
+    name: "unique_meeting_participant",
   }
 );
 
-MeetingAttendanceSchema.index({
-  callId: 1,
-  firstJoinedAt: 1,
-});
+/* =========================================================
+   MODEL
+========================================================= */
 
 const MeetingAttendance =
   models.MeetingAttendance ||
-  model<MeetingAttendanceDocument>(
+  mongoose.model(
     "MeetingAttendance",
     MeetingAttendanceSchema
   );
