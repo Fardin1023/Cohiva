@@ -1,3 +1,5 @@
+import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
+
 import {
   auth,
 } from "@clerk/nextjs/server";
@@ -13,7 +15,7 @@ import {
 ========================================================= */
 
 const CALL_TYPE =
-  "development";
+  COHIVA_CALL_TYPE;
 
 const CLASSROOM_EVENT =
   "cohiva-classroom";

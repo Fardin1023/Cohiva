@@ -1,6 +1,12 @@
 "use client";
 
 import {
+  COHIVA_CALL_TYPE,
+  COHIVA_DEFAULT_DURATION_MINUTES,
+  COHIVA_DEFAULT_PARTICIPANTS,
+} from "@/lib/cohivaMeetingConfig";
+
+import {
   CallingState,
   CancelCallButton,
   ReactionsButton,
@@ -41,6 +47,7 @@ import MeetingPermissionsPanel, {
 
 
 import MeetingCaptionsOverlay from "./MeetingCaptionsOverlay";
+import MeetingSessionTimer from "./MeetingSessionTimer";
 
 import type {
   AccessibilitySettings,
@@ -86,6 +93,10 @@ const MeetingJoinRequests = dynamic(
 
 const MeetingAccessSettings = dynamic(
   () => import("./MeetingAccessSettings")
+);
+
+const MeetingLimitsSettings = dynamic(
+  () => import("./MeetingLimitsSettings")
 );
 
 /* =========================================================
@@ -368,7 +379,7 @@ const MeetingRoom = ({
 
     const streamCall =
       client.call(
-        "development",
+        COHIVA_CALL_TYPE,
         callId
       );
 
@@ -393,30 +404,37 @@ const MeetingRoom = ({
           if (
             shouldCreate
           ) {
-            await streamCall.getOrCreate({
-              data: {
-                members: [
-                  {
-                    user_id:
-                      userId,
+            const response =
+              await fetch(
+                "/api/meetings/create",
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type":
+                      "application/json",
                   },
-                ],
+                  body: JSON.stringify({
+                    kind: "instant",
+                    callId,
+                    durationMinutes:
+                      COHIVA_DEFAULT_DURATION_MINUTES,
+                    maxParticipants:
+                      COHIVA_DEFAULT_PARTICIPANTS,
+                  }),
+                }
+              );
 
-                custom: {
-                  title:
-                    "Cohiva Meeting",
+            const result =
+              await response.json();
 
-                  cohiva_type:
-                    "instant",
+            if (!response.ok) {
+              throw new Error(
+                result.error ||
+                  "Cohiva could not create this meeting."
+              );
+            }
 
-                  [ACCESS_KEY]:
-                    "approval",
-
-                  cohiva_permissions:
-                    DEFAULT_COHIVA_PERMISSIONS,
-                },
-              },
-            });
+            await streamCall.get();
           } else {
             await streamCall.get();
           }
@@ -594,6 +612,8 @@ const MeetingLobby = ({
     useMicrophoneState,
     useCallCallingState,
     useCallCustomData,
+    useParticipantCount,
+    useCallSettings,
   } =
     useCallStateHooks();
 
@@ -617,6 +637,17 @@ const MeetingLobby = ({
   const custom =
     useCallCustomData();
 
+  const lobbyParticipantCount =
+    useParticipantCount();
+
+  const lobbySettings =
+    useCallSettings();
+
+  const lobbyMaxParticipants =
+    lobbySettings?.limits
+      ?.max_participants ??
+    COHIVA_DEFAULT_PARTICIPANTS;
+
   const accessMode =
     normalizeAccessMode(
       custom?.[
@@ -628,6 +659,11 @@ const MeetingLobby = ({
     Boolean(
       call?.isCreatedByMe
     );
+
+  const roomFull =
+    !teacher &&
+    lobbyParticipantCount >=
+      lobbyMaxParticipants;
 
   const [
     error,
@@ -729,11 +765,26 @@ const MeetingLobby = ({
             "idle"
           );
 
-          setError(
-            joinError instanceof
-              Error
+          const message =
+            joinError instanceof Error
               ? joinError.message
-              : "Cohiva could not join this meeting."
+              : "";
+
+          const normalized =
+            message.toLowerCase();
+
+          setError(
+            normalized.includes("participant") &&
+            (
+              normalized.includes("limit") ||
+              normalized.includes("maximum") ||
+              normalized.includes("full")
+            )
+              ? "This Cohiva meeting is full. The host has reached the participant limit."
+              : normalized.includes("ended")
+                ? "This Cohiva meeting has already ended."
+                : message ||
+                  "Cohiva could not join this meeting."
           );
         }
       },
@@ -1195,6 +1246,15 @@ const MeetingLobby = ({
                   }
                 />
 
+                <div className="mt-3">
+                  <MeetingLimitsSettings
+                    callId={
+                      callId
+                    }
+                    compact
+                  />
+                </div>
+
               </div>
             )}
 
@@ -1263,6 +1323,12 @@ const MeetingLobby = ({
               </div>
             )}
 
+            {roomFull && (
+              <div className="mt-4 rounded-xl bg-[#CC3A63]/10 p-3 text-xs font-bold text-[#CC3A63]">
+                👥 This meeting is full ({lobbyParticipantCount}/{lobbyMaxParticipants}).
+              </div>
+            )}
+
             {error && (
               <div className="mt-4 rounded-xl bg-[#CC3A63]/10 p-3 text-xs font-bold text-[#CC3A63]">
                 {error}
@@ -1279,8 +1345,11 @@ const MeetingLobby = ({
                   requesting ||
                   (
                     !teacher &&
-                    accessMode ===
-                      "locked"
+                    (
+                      accessMode ===
+                        "locked" ||
+                      roomFull
+                    )
                   ) ||
                   callingState ===
                     CallingState.JOINING
@@ -1291,16 +1360,18 @@ const MeetingLobby = ({
                   ? "Please wait..."
                   : teacher
                     ? "Join Meeting"
-                    : accessMode ===
-                        "open"
-                      ? "Join Meeting"
+                    : roomFull
+                      ? "Meeting Full"
                       : accessMode ===
-                          "locked"
-                        ? "Meeting Locked"
-                        : accessStatus ===
-                            "denied"
-                          ? "Ask Again"
-                          : "Ask to Join"}
+                          "open"
+                        ? "Join Meeting"
+                        : accessMode ===
+                            "locked"
+                          ? "Meeting Locked"
+                          : accessStatus ===
+                              "denied"
+                            ? "Ask Again"
+                            : "Ask to Join"}
               </button>
             )}
 
@@ -1374,11 +1445,20 @@ const LiveMeeting = ({
   const {
     useParticipantCount,
     useCallCustomData,
+    useCallSettings,
   } =
     useCallStateHooks();
 
   const participantCount =
     useParticipantCount();
+
+  const callSettings =
+    useCallSettings();
+
+  const maxParticipants =
+    callSettings?.limits
+      ?.max_participants ??
+    COHIVA_DEFAULT_PARTICIPANTS;
 
   const custom =
     useCallCustomData();
@@ -2676,8 +2756,10 @@ const LiveMeeting = ({
             }
             className="rounded-lg bg-white/10 px-3 py-2 text-xs font-black"
           >
-            👥 {participantCount}
+            👥 {participantCount}/{maxParticipants}
           </button>
+
+          <MeetingSessionTimer />
 
           {teacher &&
             raisedHands.size >

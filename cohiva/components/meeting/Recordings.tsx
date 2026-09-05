@@ -1,5 +1,7 @@
 "use client";
 
+import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
+
 import { useSmartPolling } from "@/lib/useSmartPolling";
 
 import {
@@ -255,7 +257,7 @@ const Recordings = () => {
               filter_conditions: {
                 type: {
                   $eq:
-                    "development",
+                    COHIVA_CALL_TYPE,
                 },
 
                 $or: [

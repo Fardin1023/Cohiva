@@ -18,8 +18,14 @@ import {
 } from "react";
 
 import { useSmartPolling } from "@/lib/useSmartPolling";
+import {
+  COHIVA_CALL_TYPE,
+  COHIVA_DEFAULT_DURATION_MINUTES,
+  COHIVA_DEFAULT_PARTICIPANTS,
+} from "@/lib/cohivaMeetingConfig";
 
 import ActionModal from "./ActionModal";
+import MeetingLimitFields from "./meeting/MeetingLimitFields";
 
 const ScheduleMeetingForm = dynamic(
   () => import("./meeting/ScheduleMeetingForm"),
@@ -197,6 +203,30 @@ const HomeDashboard = () => {
     useState("");
 
   const [
+    instantDurationMinutes,
+    setInstantDurationMinutes,
+  ] = useState(
+    COHIVA_DEFAULT_DURATION_MINUTES
+  );
+
+  const [
+    instantMaxParticipants,
+    setInstantMaxParticipants,
+  ] = useState(
+    COHIVA_DEFAULT_PARTICIPANTS
+  );
+
+  const [
+    instantMeetingError,
+    setInstantMeetingError,
+  ] = useState("");
+
+  const [
+    startingInstantMeeting,
+    setStartingInstantMeeting,
+  ] = useState(false);
+
+  const [
     upcomingMeeting,
     setUpcomingMeeting,
   ] =
@@ -248,7 +278,7 @@ const HomeDashboard = () => {
               filter_conditions: {
                 type: {
                   $eq:
-                    "development",
+                    COHIVA_CALL_TYPE,
                 },
 
                 members: {
@@ -501,17 +531,76 @@ const HomeDashboard = () => {
   ===================================================== */
 
   const startInstantMeeting =
-    () => {
-      const callId =
-        crypto.randomUUID();
+    async () => {
+      if (
+        startingInstantMeeting
+      ) {
+        return;
+      }
 
-      setActiveModal(
-        null
-      );
+      try {
+        setStartingInstantMeeting(
+          true
+        );
 
-      router.push(
-        `/meeting/${callId}?create=1`
-      );
+        setInstantMeetingError(
+          ""
+        );
+
+        const response =
+          await fetch(
+            "/api/meetings/create",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+              body: JSON.stringify({
+                kind: "instant",
+                durationMinutes:
+                  instantDurationMinutes,
+                maxParticipants:
+                  instantMaxParticipants,
+              }),
+            }
+          );
+
+        const result =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error ||
+              "Unable to create meeting."
+          );
+        }
+
+        setActiveModal(
+          null
+        );
+
+        router.push(
+          `/meeting/${encodeURIComponent(
+            result.callId
+          )}`
+        );
+      } catch (error) {
+        console.error(
+          "Instant meeting error:",
+          error
+        );
+
+        setInstantMeetingError(
+          error instanceof Error
+            ? error.message
+            : "Unable to create meeting."
+        );
+      } finally {
+        setStartingInstantMeeting(
+          false
+        );
+      }
     };
 
   /* =====================================================
@@ -975,27 +1064,52 @@ const HomeDashboard = () => {
         <div className="space-y-4">
 
           <div className="rounded-2xl bg-[#CC3A63]/10 p-4">
-
             <p className="font-bold text-[#3D3732]">
               Instant Meeting
             </p>
 
             <p className="mt-1 text-sm leading-6 text-[#756E64]">
-              A unique Cohiva room
-              will be created
-              immediately.
+              Choose the room limits, then Cohiva will create the meeting immediately.
             </p>
-
           </div>
+
+          <MeetingLimitFields
+            durationMinutes={
+              instantDurationMinutes
+            }
+            maxParticipants={
+              instantMaxParticipants
+            }
+            onDurationChange={
+              setInstantDurationMinutes
+            }
+            onParticipantsChange={
+              setInstantMaxParticipants
+            }
+            disabled={
+              startingInstantMeeting
+            }
+          />
+
+          {instantMeetingError && (
+            <div className="rounded-xl bg-[#CC3A63]/10 p-3 text-xs font-bold text-[#CC3A63]">
+              {instantMeetingError}
+            </div>
+          )}
 
           <button
             type="button"
-            onClick={
-              startInstantMeeting
+            onClick={() =>
+              void startInstantMeeting()
             }
-            className="w-full rounded-2xl bg-[#CC3A63] px-5 py-3.5 font-bold text-white transition hover:bg-[#B83057]"
+            disabled={
+              startingInstantMeeting
+            }
+            className="w-full rounded-2xl bg-[#CC3A63] px-5 py-3.5 font-bold text-white transition hover:bg-[#B83057] disabled:cursor-wait disabled:opacity-60"
           >
-            Start Meeting
+            {startingInstantMeeting
+              ? "Creating meeting..."
+              : "Start Meeting"}
           </button>
 
         </div>

@@ -1,3 +1,5 @@
+import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
+
 import {
   auth,
 } from "@clerk/nextjs/server";
@@ -60,7 +62,7 @@ const getCall =
 
     const call =
       client.video.call(
-        "development",
+        COHIVA_CALL_TYPE,
         callId
       );
 

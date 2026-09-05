@@ -1,3 +1,5 @@
+import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
+
 import {
   auth,
 } from "@clerk/nextjs/server";
@@ -9,7 +11,7 @@ import { getStreamServerClient } from "@/lib/streamServer";
 ========================================================= */
 
 const CALL_TYPE =
-  "development";
+  COHIVA_CALL_TYPE;
 
 const WHITEBOARD_EVENT =
   "cohiva-whiteboard";

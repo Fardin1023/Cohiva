@@ -1,3 +1,5 @@
+import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
+
 import {
   auth,
 } from "@clerk/nextjs/server";
@@ -13,7 +15,7 @@ import MeetingJoinRequest from "@/models/MeetingJoinRequest";
 ========================================================= */
 
 const CALL_TYPE =
-  "development";
+  COHIVA_CALL_TYPE;
 
 const ACCESS_KEY =
   "cohiva_access_mode";
@@ -122,6 +124,7 @@ const getStreamCall =
 
     return {
       call,
+      response,
       accessMode,
       creatorId,
     };
@@ -689,6 +692,7 @@ export async function POST(
 
     const {
       call,
+      response: streamResponse,
       creatorId,
     } =
       await getStreamCall(
@@ -766,6 +770,31 @@ export async function POST(
       action ===
       "approve"
     ) {
+      const currentParticipants =
+        streamResponse.call.session
+          ?.participants?.length ??
+        0;
+
+      const maxParticipants =
+        streamResponse.call.settings
+          ?.limits?.max_participants ??
+        20;
+
+      if (
+        currentParticipants >=
+        maxParticipants
+      ) {
+        return Response.json(
+          {
+            error:
+              `This meeting is full (${currentParticipants}/${maxParticipants}).`,
+          },
+          {
+            status: 409,
+          }
+        );
+      }
+
       /*
        * Make the user an actual member
        * BEFORE marking them approved.

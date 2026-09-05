@@ -14,6 +14,7 @@ import {
 } from "react";
 
 import MeetingAccessSettings from "./MeetingAccessSettings";
+import MeetingLimitsSettings from "./MeetingLimitsSettings";
 
 /* =========================================================
    TYPES
@@ -488,6 +489,14 @@ const MeetingPermissionsPanel = ({
               callId
             }
           />
+
+          <div className="mt-4">
+            <MeetingLimitsSettings
+              callId={
+                callId
+              }
+            />
+          </div>
 
           {/* ===============================================
               CLASS PERMISSIONS

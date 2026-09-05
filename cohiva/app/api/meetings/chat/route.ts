@@ -1,3 +1,5 @@
+import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
+
 import {
   auth,
 } from "@clerk/nextjs/server";
@@ -17,7 +19,7 @@ import MeetingChatMessage from "@/models/MeetingChatMessage";
 ========================================================= */
 
 const CALL_TYPE =
-  "development";
+  COHIVA_CALL_TYPE;
 
 const CHAT_EVENT =
   "cohiva-chat";

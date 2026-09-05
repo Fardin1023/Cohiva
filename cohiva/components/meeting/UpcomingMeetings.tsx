@@ -1,5 +1,7 @@
 "use client";
 
+import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
+
 import {
   type Call,
   useStreamVideoClient,
@@ -91,7 +93,7 @@ const UpcomingMeetings = () => {
                   {
                     type: {
                       $eq:
-                        "development",
+                        COHIVA_CALL_TYPE,
                     },
 
                     members: {

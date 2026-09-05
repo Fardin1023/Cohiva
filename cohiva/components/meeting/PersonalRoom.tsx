@@ -1,10 +1,11 @@
 "use client";
 
-import { useUser } from "@clerk/nextjs";
-
 import {
-  useStreamVideoClient,
-} from "@stream-io/video-react-sdk";
+  COHIVA_DEFAULT_DURATION_MINUTES,
+  COHIVA_DEFAULT_PARTICIPANTS,
+} from "@/lib/cohivaMeetingConfig";
+
+import { useUser } from "@clerk/nextjs";
 
 import {
   useRouter,
@@ -24,9 +25,6 @@ const PersonalRoom = () => {
     user,
     isLoaded,
   } = useUser();
-
-  const client =
-    useStreamVideoClient();
 
   const [
     roomReady,
@@ -80,7 +78,6 @@ const PersonalRoom = () => {
 
   useEffect(() => {
     if (
-      !client ||
       !user ||
       !personalRoomId
     ) {
@@ -90,12 +87,6 @@ const PersonalRoom = () => {
     let cancelled =
       false;
 
-    const room =
-      client.call(
-        "development",
-        personalRoomId
-      );
-
     const prepareRoom =
       async () => {
         try {
@@ -103,45 +94,48 @@ const PersonalRoom = () => {
             true
           );
 
-          setError("");
+          setError(
+            ""
+          );
 
-          /*
-           * getOrCreate means:
-           *
-           * - First visit → create room
-           * - Future visits → load same room
-           *
-           * The ID never changes for
-           * this Clerk user.
-           */
-          await room.getOrCreate({
-            data: {
-              members: [
-                {
-                  user_id:
-                    user.id,
+          const response =
+            await fetch(
+              "/api/meetings/create",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type":
+                    "application/json",
                 },
-              ],
+                body: JSON.stringify({
+                  kind: "personal",
+                  callId:
+                    personalRoomId,
+                  title:
+                    `${
+                      user.firstName ||
+                      user.username ||
+                      "Cohiva"
+                    }'s Personal Room`,
+                  description:
+                    "Permanent Cohiva personal meeting room",
+                  durationMinutes:
+                    COHIVA_DEFAULT_DURATION_MINUTES,
+                  maxParticipants:
+                    COHIVA_DEFAULT_PARTICIPANTS,
+                }),
+              }
+            );
 
-              custom: {
-                title:
-                  `${
-                    user.firstName ||
-                    user.username ||
-                    "Cohiva"
-                  }'s Personal Room`,
+          const result =
+            await response.json();
 
-                description:
-                  "Permanent Cohiva personal meeting room",
-
-                cohiva_type:
-                  "personal",
-
-                owner_id:
-                  user.id,
-              },
-            },
-          });
+          if (!response.ok) {
+            throw new Error(
+              result.error ||
+                "Cohiva could not prepare your personal room."
+            );
+          }
 
           if (!cancelled) {
             setRoomReady(
@@ -160,7 +154,9 @@ const PersonalRoom = () => {
             );
 
             setError(
-              "Cohiva could not prepare your personal room."
+              err instanceof Error
+                ? err.message
+                : "Cohiva could not prepare your personal room."
             );
           }
         } finally {
@@ -177,19 +173,8 @@ const PersonalRoom = () => {
     return () => {
       cancelled =
         true;
-
-      /*
-       * Dispose this particular
-       * client-side call instance.
-       */
-      void room
-        .leave()
-        .catch(() => {
-          // Safe cleanup.
-        });
     };
   }, [
-    client,
     user,
     personalRoomId,
   ]);
@@ -358,8 +343,7 @@ const PersonalRoom = () => {
   ===================================================== */
 
   if (
-    loading ||
-    !client
+    loading
   ) {
     return (
       <PersonalRoomLoading />

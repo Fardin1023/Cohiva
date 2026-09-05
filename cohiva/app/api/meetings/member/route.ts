@@ -1,3 +1,5 @@
+import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
+
 import { auth } from "@clerk/nextjs/server";
 import { getStreamServerClient } from "@/lib/streamServer";
 
@@ -61,7 +63,7 @@ export async function POST(
 
     const call =
       streamClient.video.call(
-        "development",
+        COHIVA_CALL_TYPE,
         callId
       );
 

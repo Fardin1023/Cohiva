@@ -1,5 +1,7 @@
 "use client";
 
+import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
+
 import {
   type Call,
   useStreamVideoClient,
@@ -65,7 +67,7 @@ const PreviousMeetings = () => {
               filter_conditions: {
                 type: {
                   $eq:
-                    "development",
+                    COHIVA_CALL_TYPE,
                 },
 
                 members: {

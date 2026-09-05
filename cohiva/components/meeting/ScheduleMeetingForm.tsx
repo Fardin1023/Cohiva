@@ -2,10 +2,14 @@
 
 import { useUser } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
-
-import { useStreamVideoClient } from "@stream-io/video-react-sdk";
-
 import { useState } from "react";
+
+import {
+  COHIVA_DEFAULT_DURATION_MINUTES,
+  COHIVA_DEFAULT_PARTICIPANTS,
+} from "@/lib/cohivaMeetingConfig";
+
+import MeetingLimitFields from "./MeetingLimitFields";
 
 type ScheduleMeetingFormProps = {
   onScheduled?: () => void;
@@ -15,10 +19,7 @@ const ScheduleMeetingForm = ({
   onScheduled,
 }: ScheduleMeetingFormProps) => {
   const router = useRouter();
-
   const { user } = useUser();
-
-  const client = useStreamVideoClient();
 
   const [title, setTitle] =
     useState("");
@@ -32,6 +33,20 @@ const ScheduleMeetingForm = ({
   const [time, setTime] =
     useState("");
 
+  const [
+    durationMinutes,
+    setDurationMinutes,
+  ] = useState(
+    COHIVA_DEFAULT_DURATION_MINUTES
+  );
+
+  const [
+    maxParticipants,
+    setMaxParticipants,
+  ] = useState(
+    COHIVA_DEFAULT_PARTICIPANTS
+  );
+
   const [error, setError] =
     useState("");
 
@@ -44,14 +59,6 @@ const ScheduleMeetingForm = ({
 
   const scheduleMeeting = async () => {
     setError("");
-
-    if (!client) {
-      setError(
-        "Cohiva is still connecting. Please try again."
-      );
-
-      return;
-    }
 
     if (!user) {
       setError(
@@ -108,45 +115,38 @@ const ScheduleMeetingForm = ({
     try {
       setSubmitting(true);
 
-      const callId =
-        crypto.randomUUID();
-
-      /*
-       * TEMPORARY:
-       * Keep development until we fix
-       * the permissions of your
-       * default Stream call type.
-       */
-      const call =
-        client.call(
-          "development",
-          callId
+      const response =
+        await fetch(
+          "/api/meetings/create",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              kind: "scheduled",
+              title:
+                title.trim(),
+              description:
+                description.trim(),
+              startsAt:
+                scheduledAt.toISOString(),
+              durationMinutes,
+              maxParticipants,
+            }),
+          }
         );
 
-      await call.getOrCreate({
-        data: {
-          starts_at:
-            scheduledAt.toISOString(),
+      const result =
+        await response.json();
 
-          members: [
-            {
-              user_id:
-                user.id,
-            },
-          ],
-
-          custom: {
-            title:
-              title.trim(),
-
-            description:
-              description.trim(),
-
-            cohiva_type:
-              "scheduled",
-          },
-        },
-      });
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "Cohiva could not schedule this meeting."
+        );
+      }
 
       onScheduled?.();
 
@@ -160,7 +160,9 @@ const ScheduleMeetingForm = ({
       );
 
       setError(
-        "Cohiva could not schedule this meeting."
+        err instanceof Error
+          ? err.message
+          : "Cohiva could not schedule this meeting."
       );
     } finally {
       setSubmitting(false);
@@ -169,9 +171,6 @@ const ScheduleMeetingForm = ({
 
   return (
     <div className="space-y-5">
-
-      {/* TITLE */}
-
       <div>
         <label
           htmlFor="schedule-title"
@@ -193,8 +192,6 @@ const ScheduleMeetingForm = ({
           className="w-full rounded-2xl border border-[#403A35]/15 bg-white px-4 py-3.5 text-[#3D3732] outline-none transition placeholder:text-[#756E64]/50 focus:border-[#B9687C] focus:ring-4 focus:ring-[#B9687C]/10"
         />
       </div>
-
-      {/* DESCRIPTION */}
 
       <div>
         <label
@@ -218,10 +215,7 @@ const ScheduleMeetingForm = ({
         />
       </div>
 
-      {/* DATE + TIME */}
-
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-
         <div>
           <label
             htmlFor="schedule-date"
@@ -265,7 +259,29 @@ const ScheduleMeetingForm = ({
         </div>
       </div>
 
-      {/* ERROR */}
+      <div>
+        <p className="mb-2 text-sm font-bold text-[#3D3732]">
+          Meeting limits
+        </p>
+
+        <MeetingLimitFields
+          durationMinutes={
+            durationMinutes
+          }
+          maxParticipants={
+            maxParticipants
+          }
+          onDurationChange={
+            setDurationMinutes
+          }
+          onParticipantsChange={
+            setMaxParticipants
+          }
+          disabled={
+            submitting
+          }
+        />
+      </div>
 
       {error && (
         <div className="rounded-2xl bg-[#CC3A63]/10 px-4 py-3 text-sm font-semibold text-[#CC3A63]">
@@ -273,12 +289,10 @@ const ScheduleMeetingForm = ({
         </div>
       )}
 
-      {/* BUTTON */}
-
       <button
         type="button"
-        onClick={
-          scheduleMeeting
+        onClick={() =>
+          void scheduleMeeting()
         }
         disabled={
           submitting
