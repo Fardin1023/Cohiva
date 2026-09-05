@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { StreamClient } from "@stream-io/node-sdk";
+import { getStreamServerClient } from "@/lib/streamServer";
 
 type MemberRequestBody = {
   callId?: string;
@@ -52,38 +52,8 @@ export async function POST(
       );
     }
 
-    /* =====================================================
-       STREAM CONFIG
-    ===================================================== */
-
-    const apiKey =
-      process.env
-        .NEXT_PUBLIC_STREAM_API_KEY;
-
-    const apiSecret =
-      process.env
-        .STREAM_API_SECRET;
-
-    if (
-      !apiKey ||
-      !apiSecret
-    ) {
-      return Response.json(
-        {
-          error:
-            "Stream configuration is missing.",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
     const streamClient =
-      new StreamClient(
-        apiKey,
-        apiSecret
-      );
+      getStreamServerClient();
 
     /* =====================================================
        ADD USER AS CALL MEMBER

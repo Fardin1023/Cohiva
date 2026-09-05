@@ -26,11 +26,10 @@ const MobileNav = () => {
         aria-label="Open navigation menu"
       >
         <Image
-          src="/icons/hamburger.png"
+          src="/icons/hamburger.webp"
           alt="Menu"
           width={42}
           height={42}
-          priority
           className="object-contain"
         />
       </SheetTrigger>
@@ -45,7 +44,7 @@ const MobileNav = () => {
           <SheetTitle>
             <Link href="/" className="flex items-center gap-3">
               <Image
-                src="/images/CohivaLogo.png"
+                src="/images/CohivaLogo.webp"
                 alt="Cohiva logo"
                 width={42}
                 height={42}

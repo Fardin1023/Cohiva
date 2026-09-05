@@ -88,6 +88,14 @@ export async function GET(
         .findOne({
           callId,
         })
+        .select({
+          _id: 0,
+          elements: 1,
+          title: 1,
+          elementCount: 1,
+          lastSavedAt: 1,
+          updatedAt: 1,
+        })
         .lean();
 
     /* =====================================================
@@ -270,9 +278,14 @@ export async function PUT(
      * Find existing board.
      */
     const existing =
-      await WhiteboardState.findOne({
-        callId,
-      });
+      await WhiteboardState
+        .findOne({
+          callId,
+        })
+        .select({
+          ownerId: 1,
+        })
+        .lean();
 
     /*
      * Once a board has an owner,

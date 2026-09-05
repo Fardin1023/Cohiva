@@ -2,9 +2,7 @@ import {
   auth,
 } from "@clerk/nextjs/server";
 
-import {
-  StreamClient,
-} from "@stream-io/node-sdk";
+import { getStreamServerClient } from "@/lib/streamServer";
 
 import connectMongoDB from "@/lib/mongodb";
 
@@ -54,35 +52,6 @@ const TEACHER_CACHE_MS =
   60_000;
 
 /* =========================================================
-   STREAM CLIENT
-========================================================= */
-
-const getStreamClient =
-  () => {
-    const apiKey =
-      process.env
-        .NEXT_PUBLIC_STREAM_API_KEY;
-
-    const apiSecret =
-      process.env
-        .STREAM_API_SECRET;
-
-    if (
-      !apiKey ||
-      !apiSecret
-    ) {
-      throw new Error(
-        "Stream server configuration is missing."
-      );
-    }
-
-    return new StreamClient(
-      apiKey,
-      apiSecret
-    );
-  };
-
-/* =========================================================
    NORMALIZE ACCESS MODE
 ========================================================= */
 
@@ -118,7 +87,7 @@ const getStreamCall =
       string
   ) => {
     const client =
-      getStreamClient();
+      getStreamServerClient();
 
     const call =
       client.video.call(
@@ -306,6 +275,10 @@ export async function GET(
 
             userId,
           })
+          .select({
+            _id: 0,
+            status: 1,
+          })
           .lean();
 
       return Response.json({
@@ -380,6 +353,14 @@ export async function GET(
         .sort({
           requestedAt:
             1,
+        })
+        .select({
+          _id: 0,
+          userId: 1,
+          name: 1,
+          image: 1,
+          requestedAt: 1,
+          status: 1,
         })
         .lean();
 
@@ -574,11 +555,16 @@ export async function POST(
       await connectMongoDB();
 
       const existing =
-        await MeetingJoinRequest.findOne({
-          callId,
+        await MeetingJoinRequest
+          .findOne({
+            callId,
 
-          userId,
-        });
+            userId,
+          })
+          .select({
+            status: 1,
+          })
+          .lean();
 
       /*
        * Already approved users don't

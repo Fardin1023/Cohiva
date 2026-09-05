@@ -12,24 +12,9 @@ import {
   useState,
 } from "react";
 
-/* =========================================================
-   TYPES
-========================================================= */
-
-export type AccessibilitySettings = {
-  captionsVisible: boolean;
-
-  captionSize:
-    | "small"
-    | "medium"
-    | "large";
-
-  highContrast: boolean;
-
-  reduceMotion: boolean;
-
-  hideReactions: boolean;
-};
+import type {
+  AccessibilitySettings,
+} from "./meetingAccessibilityTypes";
 
 type MeetingAccessibilityPanelProps = {
   open: boolean;
@@ -976,89 +961,6 @@ const CaptionNotification = ({
         </div>
 
       </div>
-
-    </div>
-  );
-};
-
-/* =========================================================
-   CAPTION OVERLAY
-
-   Rendered inside MeetingRoom workspace.
-========================================================= */
-
-export const MeetingCaptionsOverlay = ({
-  visible,
-  size,
-}: {
-  visible: boolean;
-
-  size:
-    AccessibilitySettings["captionSize"];
-}) => {
-  const {
-    useCallClosedCaptions,
-    useIsCallCaptioningInProgress,
-  } =
-    useCallStateHooks();
-
-  const captions =
-    useCallClosedCaptions();
-
-  const captionsRunning =
-    useIsCallCaptioningInProgress();
-
-  if (
-    !visible ||
-    !captionsRunning ||
-    captions.length ===
-      0
-  ) {
-    return null;
-  }
-
-  const textSize =
-    size ===
-    "small"
-      ? "text-xs"
-      : size ===
-          "large"
-        ? "text-xl"
-        : "text-base";
-
-  return (
-    <div
-      aria-live="polite"
-      aria-atomic="false"
-      className="pointer-events-none absolute inset-x-4 bottom-5 z-[120] flex flex-col items-center gap-2"
-    >
-
-      {captions.map(
-        (
-          caption
-        ) => {
-          const speaker =
-            caption.user?.name ||
-            "Participant";
-
-          return (
-            <div
-              key={`${caption.user?.id ?? "unknown"}-${caption.start_time}`}
-              className={`max-w-[850px] rounded-[14px] bg-black/85 px-4 py-2.5 text-center font-semibold leading-relaxed text-white shadow-2xl backdrop-blur ${textSize}`}
-            >
-
-              <span className="mr-2 font-black text-[#D9E2AE]">
-                {speaker}:
-              </span>
-
-              <span>
-                {caption.text}
-              </span>
-
-            </div>
-          );
-        }
-      )}
 
     </div>
   );

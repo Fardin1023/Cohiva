@@ -7,10 +7,11 @@ import {
 
 import {
   useCallback,
-  useEffect,
   useRef,
   useState,
 } from "react";
+
+import { useSmartPolling } from "@/lib/useSmartPolling";
 
 /* =========================================================
    TYPES
@@ -256,45 +257,23 @@ const MeetingJoinRequests = ({
     );
 
   /* =====================================================
-     POLLING
+     WAITING-ROOM POLLING
 
-     1.5 seconds is responsive without
-     hammering your API every few hundred ms.
+     Keep the fast 1.5s response while the page is visible,
+     but stop hammering the API when the tab is backgrounded.
   ===================================================== */
 
-  useEffect(() => {
-    if (
-      !teacher ||
-      accessMode !==
-        "approval"
-    ) {
-      setRequests(
-        []
-      );
-
-      return;
-    }
-
-    void loadRequests();
-
-    const timer =
-      window.setInterval(
-        () => {
-          void loadRequests();
-        },
-        1500
-      );
-
-    return () => {
-      window.clearInterval(
-        timer
-      );
-    };
-  }, [
-    teacher,
-    accessMode,
+  useSmartPolling(
     loadRequests,
-  ]);
+    {
+      enabled:
+        teacher &&
+        accessMode ===
+          "approval",
+      intervalMs:
+        1_500,
+    }
+  );
 
   /* =====================================================
      APPROVE / DENY

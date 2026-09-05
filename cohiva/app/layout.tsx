@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
 
 import {
-  Geist,
   Geist_Mono,
   Noto_Sans,
-  Playfair_Display,
 } from "next/font/google";
 
 import { ClerkProvider } from "@clerk/nextjs";
@@ -13,35 +11,28 @@ import { cn } from "@/lib/utils";
 
 import StreamVideoProvider from "@/components/providers/StreamVideoProvider";
 
-import "@stream-io/video-react-sdk/dist/css/styles.css";
 import "./globals.css";
 
 /* =========================================================
    FONTS
-========================================================= */
 
-const playfairDisplayHeading =
-  Playfair_Display({
-    subsets: ["latin"],
-    variable: "--font-heading",
-  });
+   Only the two families Cohiva actually uses are loaded.
+   Removing unused font families reduces font requests and
+   CSS/font payload on every route.
+========================================================= */
 
 const notoSans =
   Noto_Sans({
     subsets: ["latin"],
     variable: "--font-sans",
-  });
-
-const geistSans =
-  Geist({
-    variable: "--font-geist-sans",
-    subsets: ["latin"],
+    display: "swap",
   });
 
 const geistMono =
   Geist_Mono({
-    variable: "--font-geist-mono",
     subsets: ["latin"],
+    variable: "--font-mono",
+    display: "swap",
   });
 
 /* =========================================================
@@ -65,33 +56,25 @@ export default function RootLayout({
 }>) {
   return (
     <ClerkProvider>
-
       <html
         lang="en"
         suppressHydrationWarning
         className={cn(
           "h-full antialiased",
-          geistSans.variable,
-          geistMono.variable,
           notoSans.variable,
-          playfairDisplayHeading.variable,
+          geistMono.variable,
           "font-sans"
         )}
       >
-
         <body
           suppressHydrationWarning
-          className="min-h-full flex flex-col"
+          className="flex min-h-full flex-col"
         >
-
           <StreamVideoProvider>
             {children}
           </StreamVideoProvider>
-
         </body>
-
       </html>
-
     </ClerkProvider>
   );
 }

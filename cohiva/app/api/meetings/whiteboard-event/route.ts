@@ -2,9 +2,7 @@ import {
   auth,
 } from "@clerk/nextjs/server";
 
-import {
-  StreamClient,
-} from "@stream-io/node-sdk";
+import { getStreamServerClient } from "@/lib/streamServer";
 
 /* =========================================================
    CONFIG
@@ -35,35 +33,6 @@ type WhiteboardEvent =
 type WhiteboardPermissions = {
   studentWhiteboard?: boolean;
 };
-
-/* =========================================================
-   STREAM
-========================================================= */
-
-const getStreamClient =
-  () => {
-    const apiKey =
-      process.env
-        .NEXT_PUBLIC_STREAM_API_KEY;
-
-    const apiSecret =
-      process.env
-        .STREAM_API_SECRET;
-
-    if (
-      !apiKey ||
-      !apiSecret
-    ) {
-      throw new Error(
-        "Stream configuration is missing."
-      );
-    }
-
-    return new StreamClient(
-      apiKey,
-      apiSecret
-    );
-  };
 
 /* =========================================================
    BYTE SIZE
@@ -180,7 +149,7 @@ export async function POST(
     ===================================================== */
 
     const streamClient =
-      getStreamClient();
+      getStreamServerClient();
 
     const call =
       streamClient.video.call(

@@ -1,5 +1,7 @@
 "use client";
 
+import { useSmartPolling } from "@/lib/useSmartPolling";
+
 import {
   type Call,
   useStreamVideoClient,
@@ -9,7 +11,6 @@ import { useUser } from "@clerk/nextjs";
 
 import {
   useCallback,
-  useEffect,
   useState,
 } from "react";
 
@@ -121,6 +122,44 @@ const createFileName = (
     "meeting"
   }-${date}.mp4`;
 };
+
+/* =========================================================
+   BOUNDED CONCURRENCY
+
+   Stream recording discovery can involve many calls. Running
+   all listRecordings requests at once creates a large burst.
+   Small batches keep the page responsive and reduce rate-limit
+   pressure without changing the returned results.
+========================================================= */
+
+async function settleInBatches<T, R>(
+  items: readonly T[],
+  batchSize: number,
+  worker: (item: T) => Promise<R>
+): Promise<PromiseSettledResult<R>[]> {
+  const settled:
+    PromiseSettledResult<R>[] = [];
+
+  for (
+    let index = 0;
+    index < items.length;
+    index += batchSize
+  ) {
+    const batch =
+      items.slice(
+        index,
+        index + batchSize
+      );
+
+    settled.push(
+      ...(await Promise.allSettled(
+        batch.map(worker)
+      ))
+    );
+  }
+
+  return settled;
+}
 
 /* =========================================================
    RECORDINGS PAGE
@@ -258,67 +297,67 @@ const Recordings = () => {
            * each matching meeting.
            */
           const results =
-            await Promise.allSettled(
-              response.calls.map(
-                async (
-                  call: Call
-                ) => {
-                  const result =
-                    await call.listRecordings();
+            await settleInBatches(
+              response.calls,
+              8,
+              async (
+                call: Call
+              ) => {
+                const result =
+                  await call.listRecordings();
 
-                  const custom =
-                    call.state
-                      .custom;
+                const custom =
+                  call.state
+                    .custom;
 
-                  const title =
-                    typeof custom
-                      ?.title ===
-                    "string"
-                      ? custom.title
-                      : call.id.startsWith(
-                            "personal-"
-                          )
-                        ? "Personal Room"
-                        : "Cohiva Meeting";
+                const title =
+                  typeof custom
+                    ?.title ===
+                  "string"
+                    ? custom.title
+                    : call.id.startsWith(
+                          "personal-"
+                        )
+                      ? "Personal Room"
+                      : "Cohiva Meeting";
 
-                  return result.recordings.map(
-                    (
-                      recording,
-                      index
-                    ): RecordingItem => {
-                      const startTime =
-                        parseDate(
+                return result.recordings.map(
+                  (
+                    recording,
+                    index
+                  ): RecordingItem => {
+                    const startTime =
+                      parseDate(
+                        recording.start_time
+                      );
+
+                    const endTime =
+                      parseDate(
+                        recording.end_time
+                      );
+
+                    return {
+                      id:
+                        `${call.cid}-${String(
                           recording.start_time
-                        );
+                        )}-${index}`,
 
-                      const endTime =
-                        parseDate(
-                          recording.end_time
-                        );
+                      callId:
+                        call.id,
 
-                      return {
-                        id:
-                          `${call.cid}-${String(
-                            recording.start_time
-                          )}-${index}`,
+                      callTitle:
+                        title,
 
-                        callId:
-                          call.id,
+                      url:
+                        recording.url,
 
-                        callTitle:
-                          title,
+                      startTime,
 
-                        url:
-                          recording.url,
-
-                        startTime,
-
-                        endTime,
-                      };
-                    }
-                  );
-                }
-              )
+                      endTime,
+                    };
+                  }
+                );
+              }
             );
 
           const loadedRecordings =
@@ -397,38 +436,27 @@ const Recordings = () => {
 
   /* =====================================================
      INITIAL LOAD + AUTO REFRESH
+
+     Recording discovery is expensive because each matching
+     call can require a listRecordings request. Refresh only
+     while the page is visible and at a calmer cadence.
   ===================================================== */
 
-  useEffect(() => {
-    if (
-      !client ||
-      !userId
-    ) {
-      return;
+  useSmartPolling(
+    () =>
+      loadRecordings(
+        true
+      ),
+    {
+      enabled:
+        Boolean(
+          client &&
+          userId
+        ),
+      intervalMs:
+        120_000,
     }
-
-    void loadRecordings();
-
-    const timer =
-      window.setInterval(
-        () => {
-          void loadRecordings(
-            true
-          );
-        },
-        60000
-      );
-
-    return () => {
-      window.clearInterval(
-        timer
-      );
-    };
-  }, [
-    client,
-    userId,
-    loadRecordings,
-  ]);
+  );
 
   /* =====================================================
      COPY RECORDING LINK

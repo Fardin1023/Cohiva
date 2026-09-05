@@ -21,11 +21,13 @@ import {
 } from "@stream-io/video-react-sdk";
 
 import { useUser } from "@clerk/nextjs";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -37,16 +39,12 @@ import MeetingPermissionsPanel, {
   type CohivaPermissions,
 } from "./MeetingPermissionsPanel";
 
-import MeetingParticipantsPanel from "./MeetingParticipantsPanel";
-import MeetingChatPanel from "./MeetingChatPanel";
-import MeetingAttendancePanel from "./MeetingAttendancePanel";
-import MeetingJoinRequests from "./MeetingJoinRequests";
-import MeetingAccessSettings from "./MeetingAccessSettings";
 
-import MeetingAccessibilityPanel, {
-  MeetingCaptionsOverlay,
-  type AccessibilitySettings,
-} from "./MeetingAccessibilityPanel";
+import MeetingCaptionsOverlay from "./MeetingCaptionsOverlay";
+
+import type {
+  AccessibilitySettings,
+} from "./meetingAccessibilityTypes";
 
 import {
   CohivaParticipantBarUI,
@@ -58,6 +56,37 @@ import {
   CohivaRecordingEvents,
   CohivaRecordingIndicator,
 } from "./CohivaRecordingControl";
+
+/* =========================================================
+   LAZY MEETING PANELS
+
+   These large panels are not needed for the initial video
+   experience. Load them only when the user opens them.
+========================================================= */
+
+const MeetingParticipantsPanel = dynamic(
+  () => import("./MeetingParticipantsPanel")
+);
+
+const MeetingChatPanel = dynamic(
+  () => import("./MeetingChatPanel")
+);
+
+const MeetingAttendancePanel = dynamic(
+  () => import("./MeetingAttendancePanel")
+);
+
+const MeetingAccessibilityPanel = dynamic(
+  () => import("./MeetingAccessibilityPanel")
+);
+
+const MeetingJoinRequests = dynamic(
+  () => import("./MeetingJoinRequests")
+);
+
+const MeetingAccessSettings = dynamic(
+  () => import("./MeetingAccessSettings")
+);
 
 /* =========================================================
    TYPES
@@ -1380,6 +1409,28 @@ const LiveMeeting = ({
       "video"
     );
 
+  /*
+   * Do not load Excalidraw on initial meeting entry. Once the
+   * whiteboard is opened for the first time, keep it mounted
+   * so switching back to video does not lose board state.
+   */
+  const [
+    whiteboardMounted,
+    setWhiteboardMounted,
+  ] =
+    useState(false);
+
+  useLayoutEffect(() => {
+    if (
+      activeView ===
+      "whiteboard"
+    ) {
+      setWhiteboardMounted(
+        true
+      );
+    }
+  }, [activeView]);
+
   const [
     copied,
     setCopied,
@@ -2602,7 +2653,7 @@ const LiveMeeting = ({
           HEADER
       ================================================= */}
 
-      <header className="flex h-[64px] shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-[#302B27] px-3 lg:px-5">
+      <header className="cohiva-hide-scrollbar flex h-[64px] shrink-0 items-center justify-between gap-2 overflow-x-auto border-b border-white/10 bg-[#302B27] px-2 sm:px-3 lg:px-5">
 
         <div className="flex min-w-0 items-center gap-2">
 
@@ -2647,7 +2698,7 @@ const LiveMeeting = ({
               </button>
             )}
 
-          <div className="hidden rounded-xl bg-black/20 p-1 sm:flex">
+          <div className="flex rounded-xl bg-black/20 p-1">
 
             <button
               type="button"
@@ -2656,14 +2707,14 @@ const LiveMeeting = ({
                   "video"
                 )
               }
-              className={`rounded-lg px-3 py-1.5 text-xs font-black ${
+              className={`rounded-lg px-2 py-1.5 text-xs font-black sm:px-3 ${
                 activeView ===
                 "video"
                   ? "bg-[#FFF7EB] text-[#403A35]"
                   : "text-white/60"
               }`}
             >
-              🎥 Video
+              🎥 <span className="hidden sm:inline">Video</span>
             </button>
 
             <button
@@ -2673,14 +2724,14 @@ const LiveMeeting = ({
                   "whiteboard"
                 )
               }
-              className={`rounded-lg px-3 py-1.5 text-xs font-black ${
+              className={`rounded-lg px-2 py-1.5 text-xs font-black sm:px-3 ${
                 activeView ===
                 "whiteboard"
                   ? "bg-[#A2AB73]"
                   : "text-white/60"
               }`}
             >
-              ✏ Board
+              ✏ <span className="hidden sm:inline">Board</span>
             </button>
 
           </div>
@@ -2861,26 +2912,28 @@ const LiveMeeting = ({
 
           </div>
 
-          <div
-            className={`absolute inset-0 ${
-              activeView ===
-                "whiteboard"
-                ? "visible opacity-100"
-                : "invisible pointer-events-none opacity-0"
-            }`}
-          >
-
-            <CohivaWhiteboard
-              callId={
-                callId
-              }
-              active={
+          {whiteboardMounted && (
+            <div
+              className={`absolute inset-0 ${
                 activeView ===
-                "whiteboard"
-              }
-            />
+                  "whiteboard"
+                  ? "visible opacity-100"
+                  : "invisible pointer-events-none opacity-0"
+              }`}
+            >
 
-          </div>
+              <CohivaWhiteboard
+                callId={
+                  callId
+                }
+                active={
+                  activeView ===
+                  "whiteboard"
+                }
+              />
+
+            </div>
+          )}
 
           <MeetingCaptionsOverlay
             visible={
@@ -2988,42 +3041,41 @@ const LiveMeeting = ({
         }
       />
 
-      <MeetingParticipantsPanel
-        open={
-          participantsOpen
-        }
-        onClose={() =>
-          setParticipantsOpen(
-            false
-          )
-        }
-        raisedHands={
-          raisedHands
-        }
-        classPermissions={
-          permissions
-        }
-      />
-
-      <MeetingChatPanel
-        open={
-          chatOpen
-        }
-        onClose={() =>
-          setChatOpen(
-            false
-          )
-        }
-        callId={
-          callId
-        }
-      />
-
-      {teacher && (
-        <MeetingAttendancePanel
-          open={
-            attendanceOpen
+      {participantsOpen && (
+        <MeetingParticipantsPanel
+          open
+          onClose={() =>
+            setParticipantsOpen(
+              false
+            )
           }
+          raisedHands={
+            raisedHands
+          }
+          classPermissions={
+            permissions
+          }
+        />
+      )}
+
+      {chatOpen && (
+        <MeetingChatPanel
+          open
+          onClose={() =>
+            setChatOpen(
+              false
+            )
+          }
+          callId={
+            callId
+          }
+        />
+      )}
+
+      {teacher &&
+        attendanceOpen && (
+        <MeetingAttendancePanel
+          open
           onClose={() =>
             setAttendanceOpen(
               false
@@ -3035,22 +3087,22 @@ const LiveMeeting = ({
         />
       )}
 
-      <MeetingAccessibilityPanel
-        open={
-          accessibilityOpen
-        }
-        onClose={() =>
-          setAccessibilityOpen(
-            false
-          )
-        }
-        settings={
-          accessibility
-        }
-        onChange={
-          setAccessibility
-        }
-      />
+      {accessibilityOpen && (
+        <MeetingAccessibilityPanel
+          open
+          onClose={() =>
+            setAccessibilityOpen(
+              false
+            )
+          }
+          settings={
+            accessibility
+          }
+          onChange={
+            setAccessibility
+          }
+        />
+      )}
 
     </main>
   );

@@ -2,9 +2,7 @@ import {
   auth,
 } from "@clerk/nextjs/server";
 
-import {
-  StreamClient,
-} from "@stream-io/node-sdk";
+import { getStreamServerClient } from "@/lib/streamServer";
 
 import {
   NextResponse,
@@ -37,56 +35,8 @@ export async function GET() {
       );
     }
 
-    /* =====================================================
-       ENVIRONMENT
-    ===================================================== */
-
-    const apiKey =
-      process.env
-        .NEXT_PUBLIC_STREAM_API_KEY;
-
-    const apiSecret =
-      process.env
-        .STREAM_API_SECRET;
-
-    if (
-      !apiKey ||
-      !apiSecret
-    ) {
-      console.error(
-        "Missing Stream API configuration."
-      );
-
-      return NextResponse.json(
-        {
-          error:
-            "Stream configuration is missing.",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    /* =====================================================
-       STREAM SERVER CLIENT
-
-       Increased timeout for any future
-       server operations.
-
-       Token generation itself is local
-       and does not require a Stream API
-       request.
-    ===================================================== */
-
     const streamClient =
-      new StreamClient(
-        apiKey,
-        apiSecret,
-        {
-          timeout: 10000,
-        }
-      );
+      getStreamServerClient();
 
     /* =====================================================
        GENERATE TOKEN

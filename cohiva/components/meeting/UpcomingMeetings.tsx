@@ -120,7 +120,7 @@ const UpcomingMeetings = () => {
                   50,
 
                 watch:
-                  true,
+                  false,
               }
             );
 

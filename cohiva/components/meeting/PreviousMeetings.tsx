@@ -87,7 +87,7 @@ const PreviousMeetings = () => {
 
               limit: 100,
 
-              watch: true,
+              watch: false,
             });
 
           const now =

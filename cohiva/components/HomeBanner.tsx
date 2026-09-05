@@ -13,7 +13,7 @@ const HomeBanner = () => {
 
     const timer = setInterval(() => {
       setCurrentTime(new Date());
-    }, 1000);
+    }, 30_000);
 
     return () => clearInterval(timer);
   }, []);
@@ -78,10 +78,11 @@ const HomeBanner = () => {
     <section className="relative min-h-[390px] w-full overflow-hidden rounded-[26px]">
       {/* Background */}
       <Image
-        src="/images/bg.png"
+        src="/images/bg.webp"
         alt="Cohiva home background"
         fill
         priority
+        sizes="(max-width: 767px) 100vw, calc(100vw - 264px)"
         className="object-cover object-center"
       />  
 

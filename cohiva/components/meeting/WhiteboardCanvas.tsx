@@ -72,14 +72,14 @@ type CohivaPermissions = {
 const WHITEBOARD_EVENT =
   "cohiva-whiteboard";
 
-const CHUNK_SIZE =
-  900;
+const CHUNK_SIZE_BYTES =
+  3000;
 
 const DRAW_SYNC_DELAY =
-  90;
+  120;
 
 const SAVE_DELAY =
-  900;
+  1500;
 
 /* =========================================================
    HELPERS
@@ -88,23 +88,80 @@ const SAVE_DELAY =
 const splitIntoChunks = (
   value: string
 ) => {
+  const encoder =
+    new TextEncoder();
+
+  const decoder =
+    new TextDecoder();
+
+  const bytes =
+    encoder.encode(
+      value
+    );
+
   const chunks:
     string[] = [];
 
-  for (
-    let index = 0;
-    index <
-    value.length;
-    index +=
-      CHUNK_SIZE
+  let offset =
+    0;
+
+  while (
+    offset <
+    bytes.length
   ) {
+    let end =
+      Math.min(
+        offset +
+          CHUNK_SIZE_BYTES,
+        bytes.length
+      );
+
+    /*
+     * Never split in the middle of a UTF-8 sequence. Keeping
+     * chunks byte-bounded lets each Stream custom event carry
+     * much more data than the old 900-character chunks while
+     * staying safely under the server's 4.5 KB event limit.
+     */
+    if (
+      end <
+      bytes.length
+    ) {
+      while (
+        end > offset &&
+        (
+          bytes[end] &
+          0b1100_0000
+        ) ===
+          0b1000_0000
+      ) {
+        end -=
+          1;
+      }
+    }
+
+    if (
+      end ===
+      offset
+    ) {
+      end =
+        Math.min(
+          offset +
+            CHUNK_SIZE_BYTES,
+          bytes.length
+        );
+    }
+
     chunks.push(
-      value.slice(
-        index,
-        index +
-          CHUNK_SIZE
+      decoder.decode(
+        bytes.slice(
+          offset,
+          end
+        )
       )
     );
+
+    offset =
+      end;
   }
 
   return chunks;
@@ -990,8 +1047,14 @@ const WhiteboardCanvas = ({
             "saving"
           );
 
+          /*
+           * Persist only the current visible scene. Deleted tombstones
+           * are useful for realtime reconciliation but do not need to
+           * live forever in MongoDB. This keeps saved boards smaller and
+           * faster to load as a class progresses.
+           */
           const elements =
-            api.getSceneElementsIncludingDeleted();
+            api.getSceneElements();
 
           const response =
             await fetch(

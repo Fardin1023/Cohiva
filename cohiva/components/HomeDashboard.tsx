@@ -6,17 +6,31 @@ import {
   useStreamVideoClient,
 } from "@stream-io/video-react-sdk";
 
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
 
+import { useSmartPolling } from "@/lib/useSmartPolling";
+
 import ActionModal from "./ActionModal";
-import ScheduleMeetingForm from "./meeting/ScheduleMeetingForm";
+
+const ScheduleMeetingForm = dynamic(
+  () => import("./meeting/ScheduleMeetingForm"),
+  {
+    loading: () => (
+      <div className="flex min-h-40 items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#CC3A63]/20 border-t-[#CC3A63]" />
+      </div>
+    ),
+  }
+);
 
 type ModalType =
   | "new"
@@ -79,6 +93,71 @@ const getMeetingDateLabel = (
 };
 
 /* =========================================================
+   LOCAL CLOCK
+
+   Kept in its own component so the large dashboard does not
+   re-render every time the clock changes. The UI only shows
+   minutes, so a 30-second tick is more than enough.
+========================================================= */
+
+const LocalClock = () => {
+  const [now, setNow] =
+    useState<Date | null>(null);
+
+  useEffect(() => {
+    const update = () =>
+      setNow(new Date());
+
+    update();
+
+    const timer =
+      window.setInterval(
+        update,
+        30_000
+      );
+
+    return () =>
+      window.clearInterval(timer);
+  }, []);
+
+  const time = now
+    ? now.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "--:--";
+
+  const date = now
+    ? now.toLocaleDateString([], {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      })
+    : "";
+
+  return (
+    <div className="cohiva-float w-full rounded-[26px] border border-white/70 bg-[#FFF7EB]/80 px-5 py-5 shadow-xl backdrop-blur-xl sm:px-7 sm:py-6 md:w-auto md:min-w-[285px] md:text-right">
+      <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#8F9960]">
+        Local Time
+      </p>
+
+      <h2 className="mt-2 text-4xl font-black tracking-tight text-[#3D3732] sm:text-5xl">
+        {time}
+      </h2>
+
+      <p className="mt-4 text-sm font-bold leading-6 text-[#CC3A63]">
+        {date}
+      </p>
+
+      <div className="mt-5 inline-flex rounded-full bg-[#A2AB73]/15 px-4 py-2 text-xs font-semibold text-[#737C4C]">
+        Your local timezone
+      </div>
+    </div>
+  );
+};
+
+/* =========================================================
    HOME DASHBOARD
 ========================================================= */
 
@@ -96,13 +175,6 @@ const HomeDashboard = () => {
   const userId =
     user?.id;
 
-  const [
-    currentTime,
-    setCurrentTime,
-  ] =
-    useState<Date | null>(
-      null
-    );
 
   const [
     activeModal,
@@ -144,31 +216,9 @@ const HomeDashboard = () => {
   ] =
     useState(true);
 
-  /* =====================================================
-     CLOCK
-  ===================================================== */
+  const dashboardLoadedRef =
+    useRef(false);
 
-  useEffect(() => {
-    setCurrentTime(
-      new Date()
-    );
-
-    const timer =
-      window.setInterval(
-        () => {
-          setCurrentTime(
-            new Date()
-          );
-        },
-        1000
-      );
-
-    return () => {
-      window.clearInterval(
-        timer
-      );
-    };
-  }, []);
 
   /* =====================================================
      LOAD REAL STREAM MEETING DATA
@@ -185,9 +235,13 @@ const HomeDashboard = () => {
         }
 
         try {
-          setMeetingsLoading(
-            true
-          );
+          if (
+            !dashboardLoadedRef.current
+          ) {
+            setMeetingsLoading(
+              true
+            );
+          }
 
           const response =
             await client.queryCalls({
@@ -206,7 +260,7 @@ const HomeDashboard = () => {
 
               limit: 100,
 
-              watch: true,
+              watch: false,
             });
 
           const now =
@@ -375,9 +429,16 @@ const HomeDashboard = () => {
             0
           );
         } finally {
-          setMeetingsLoading(
-            false
-          );
+          if (
+            !dashboardLoadedRef.current
+          ) {
+            dashboardLoadedRef.current =
+              true;
+
+            setMeetingsLoading(
+              false
+            );
+          }
         }
       },
       [
@@ -386,34 +447,18 @@ const HomeDashboard = () => {
       ]
     );
 
-  useEffect(() => {
-    if (
-      !client ||
-      !userId
-    ) {
-      return;
-    }
-
-    void loadDashboardMeetings();
-
-    const timer =
-      window.setInterval(
-        () => {
-          void loadDashboardMeetings();
-        },
-        30000
-      );
-
-    return () => {
-      window.clearInterval(
-        timer
-      );
-    };
-  }, [
-    client,
-    userId,
+  useSmartPolling(
     loadDashboardMeetings,
-  ]);
+    {
+      enabled:
+        Boolean(
+          client &&
+          userId
+        ),
+      intervalMs:
+        60_000,
+    }
+  );
 
   /* =====================================================
      USER
@@ -425,43 +470,6 @@ const HomeDashboard = () => {
     user?.username ||
     "there";
 
-  /* =====================================================
-     CURRENT DATE + TIME
-  ===================================================== */
-
-  const time =
-    currentTime
-      ? currentTime.toLocaleTimeString(
-          [],
-          {
-            hour:
-              "2-digit",
-
-            minute:
-              "2-digit",
-          }
-        )
-      : "--:--";
-
-  const date =
-    currentTime
-      ? currentTime.toLocaleDateString(
-          [],
-          {
-            weekday:
-              "long",
-
-            month:
-              "long",
-
-            day:
-              "numeric",
-
-            year:
-              "numeric",
-          }
-        )
-      : "";
 
   /* =====================================================
      UPCOMING DISPLAY
@@ -605,10 +613,11 @@ const HomeDashboard = () => {
         <section className="relative min-h-[300px] overflow-hidden rounded-[30px]">
 
           <Image
-            src="/images/bg.png"
+            src="/images/bg.webp"
             alt="Cohiva dashboard background"
             fill
             priority
+            sizes="(max-width: 767px) 100vw, calc(100vw - 264px)"
             className="object-cover object-center"
           />
 
@@ -758,25 +767,7 @@ const HomeDashboard = () => {
 
             {/* CLOCK */}
 
-            <div className="cohiva-float w-full rounded-[26px] border border-white/70 bg-[#FFF7EB]/80 px-7 py-6 shadow-xl backdrop-blur-xl md:w-auto md:min-w-[285px] md:text-right">
-
-              <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#8F9960]">
-                Local Time
-              </p>
-
-              <h2 className="mt-2 text-4xl font-black tracking-tight text-[#3D3732] sm:text-5xl">
-                {time}
-              </h2>
-
-              <p className="mt-4 text-sm font-bold leading-6 text-[#CC3A63]">
-                {date}
-              </p>
-
-              <div className="mt-5 inline-flex rounded-full bg-[#A2AB73]/15 px-4 py-2 text-xs font-semibold text-[#737C4C]">
-                Your local timezone
-              </div>
-
-            </div>
+            <LocalClock />
 
           </div>
         </section>

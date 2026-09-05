@@ -24,7 +24,7 @@ const AuthLayoutShell = ({ children }: { children: ReactNode }) => {
           <div>
             <div className="flex items-center gap-3">
               <Image
-                src="/images/CohivaLogo.png"
+                src="/images/CohivaLogo.webp"
                 alt="Cohiva logo"
                 width={52}
                 height={52}
@@ -99,7 +99,7 @@ const AuthLayoutShell = ({ children }: { children: ReactNode }) => {
             {/* Mobile logo */}
             <div className="mb-8 flex items-center gap-3 md:hidden">
               <Image
-                src="/images/CohivaLogo.png"
+                src="/images/CohivaLogo.webp"
                 alt="Cohiva logo"
                 width={46}
                 height={46}

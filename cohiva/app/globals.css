@@ -589,49 +589,6 @@ body {
     ease-out;
 }
 /* =========================================================
-   COHIVA STREAM MEETING UI
-========================================================= */
-
-.cohiva-stream-theme {
-  --str-video__primary-color: #cc3a63;
-
-  width: 100%;
-  min-height: 100vh;
-  background: #24211f;
-}
-
-.cohiva-stream-theme .str-video__speaker-layout {
-  width: 100%;
-  height: 100%;
-}
-
-.cohiva-stream-theme .str-video__call-controls {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.55rem;
-}
-
-.cohiva-stream-theme .str-video__composite-button {
-  border-radius: 14px;
-}
-
-@keyframes cohiva-meeting-enter {
-  from {
-    opacity: 0;
-    transform: scale(0.985);
-  }
-
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.cohiva-stream-theme {
-  animation: cohiva-meeting-enter 0.35s ease-out;
-}
-/* =========================================================
    COHIVA FULL PANEL CAMERA PREVIEW
 ========================================================= */
 
@@ -669,45 +626,6 @@ body {
   object-fit: cover !important;
   object-position: center center !important;
 }
-/* =========================================================
-   COHIVA FULL PANEL CAMERA PREVIEW
-========================================================= */
-
-.cohiva-preview-video {
-  position: absolute;
-  inset: 0;
-
-  width: 100%;
-  height: 100%;
-
-  overflow: hidden;
-  background: #302b27;
-}
-
-.cohiva-preview-video > div {
-  width: 100% !important;
-  height: 100% !important;
-}
-
-.cohiva-preview-video
-  .str-video__video-preview {
-  width: 100% !important;
-  height: 100% !important;
-}
-
-.cohiva-preview-video video {
-  display: block;
-
-  width: 100% !important;
-  height: 100% !important;
-
-  max-width: none !important;
-  max-height: none !important;
-
-  object-fit: cover !important;
-  object-position: center center !important;
-}
-
 /* =========================================================
    COHIVA RECORD BUTTON
 ========================================================= */
@@ -732,3 +650,31 @@ body {
   .str-video__call-controls__button:hover {
   transform: translateY(-2px);
 }
+/* =========================================================
+   PERFORMANCE + RESPONSIVE HELPERS
+========================================================= */
+
+.cohiva-hide-scrollbar {
+  scrollbar-width: none;
+}
+
+.cohiva-hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/*
+ * Respect the operating-system motion preference. This cuts
+ * animation work on lower-powered devices and improves UX for
+ * users who prefer reduced motion.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+

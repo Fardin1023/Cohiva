@@ -68,6 +68,17 @@ MeetingJoinRequestSchema.index(
   }
 );
 
+/*
+ * Waiting-room polling always filters by call + status and
+ * sorts by requestedAt. This compound index keeps that query
+ * fast as the collection grows.
+ */
+MeetingJoinRequestSchema.index({
+  callId: 1,
+  status: 1,
+  requestedAt: 1,
+});
+
 const MeetingJoinRequest =
   models.MeetingJoinRequest ||
   model(

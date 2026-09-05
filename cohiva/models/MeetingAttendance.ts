@@ -130,6 +130,22 @@ MeetingAttendanceSchema.index(
   }
 );
 
+/*
+ * Attendance panels and heartbeat cleanup primarily read by
+ * meeting, presence and heartbeat time. These indexes reduce
+ * scan work without changing attendance semantics.
+ */
+MeetingAttendanceSchema.index({
+  callId: 1,
+  isPresent: 1,
+  lastHeartbeatAt: -1,
+});
+
+MeetingAttendanceSchema.index({
+  callId: 1,
+  firstJoinedAt: 1,
+});
+
 /* =========================================================
    MODEL
 ========================================================= */

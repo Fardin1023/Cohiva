@@ -33,11 +33,43 @@ type ConnectedStreamProviderProps = {
    TOKEN PROVIDER
 ========================================================= */
 
+type TokenCacheEntry = {
+  token: string;
+  expiresAt: number;
+};
+
+const tokenCache =
+  new Map<
+    string,
+    TokenCacheEntry
+  >();
+
+const TOKEN_CACHE_MS =
+  50 * 60 * 1000;
+
 const getStreamToken =
-  async (): Promise<string> => {
+  async (
+    userId: string
+  ): Promise<string> => {
+    const cached =
+      tokenCache.get(
+        userId
+      );
+
+    if (
+      cached &&
+      cached.expiresAt >
+        Date.now()
+    ) {
+      return cached.token;
+    }
+
     const response =
       await fetch(
-        "/api/stream-token"
+        "/api/stream-token",
+        {
+          cache: "no-store",
+        }
       );
 
     if (!response.ok) {
@@ -54,6 +86,16 @@ const getStreamToken =
         "Stream token was not returned."
       );
     }
+
+    tokenCache.set(
+      userId,
+      {
+        token: data.token,
+        expiresAt:
+          Date.now() +
+          TOKEN_CACHE_MS,
+      }
+    );
 
     return data.token;
   };
@@ -196,7 +238,10 @@ const ConnectedStreamProvider = ({
             streamUser,
 
           tokenProvider:
-            getStreamToken,
+            () =>
+              getStreamToken(
+                userId
+              ),
 
           options: {
             maxConnectUserRetries:

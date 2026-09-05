@@ -18,6 +18,8 @@ import {
   useState,
 } from "react";
 
+import { useSmartPolling } from "@/lib/useSmartPolling";
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -423,46 +425,24 @@ const MeetingChatPanel = ({
     );
 
   /* =====================================================
-     LOAD WHEN PANEL OPENS
+     FALLBACK HISTORY SYNC
 
-     First load immediately.
-
-     Then every 5 seconds while open as
-     a lightweight fallback if a realtime
-     Stream event happens to be missed.
+     Stream custom events are the primary realtime path.
+     This visibility-aware fallback is intentionally slower
+     so an open chat panel does not hit MongoDB every 5s.
   ===================================================== */
 
-  useEffect(() => {
-    if (
-      !open
-    ) {
-      return;
+  useSmartPolling(
+    () =>
+      loadHistory(
+        loadedOnce
+      ),
+    {
+      enabled: open,
+      intervalMs:
+        30_000,
     }
-
-    void loadHistory(
-      loadedOnce
-    );
-
-    const timer =
-      window.setInterval(
-        () => {
-          void loadHistory(
-            true
-          );
-        },
-        5000
-      );
-
-    return () => {
-      window.clearInterval(
-        timer
-      );
-    };
-  }, [
-    open,
-    loadedOnce,
-    loadHistory,
-  ]);
+  );
 
   /* =====================================================
      REALTIME EVENTS

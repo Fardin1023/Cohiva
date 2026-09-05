@@ -1,8 +1,9 @@
 "use client";
 
+import { useSmartPolling } from "@/lib/useSmartPolling";
+
 import {
   useCallback,
-  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -226,34 +227,19 @@ const MeetingAttendancePanel = ({
 
   /* =====================================================
      AUTO REFRESH WHILE OPEN
+
+     Attendance does not need sub-second freshness. Pausing
+     hidden-tab polling cuts unnecessary API/DB work.
   ===================================================== */
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    void loadAttendance();
-
-    const timer =
-      window.setInterval(
-        () => {
-          void loadAttendance(
-            true
-          );
-        },
-        5000
-      );
-
-    return () => {
-      window.clearInterval(
-        timer
-      );
-    };
-  }, [
-    open,
+  useSmartPolling(
     loadAttendance,
-  ]);
+    {
+      enabled: open,
+      intervalMs:
+        10_000,
+    }
+  );
 
   /* =====================================================
      FILTER

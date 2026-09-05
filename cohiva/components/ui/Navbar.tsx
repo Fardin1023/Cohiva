@@ -10,7 +10,7 @@ const Navbar = () => {
       {/* Left - Logo + Brand */}
       <Link href="/" className="flex items-center gap-3">
         <Image
-          src="/images/CohivaLogo.png"
+          src="/images/CohivaLogo.webp"
           alt="Cohiva logo"
           width={44}
           height={44}

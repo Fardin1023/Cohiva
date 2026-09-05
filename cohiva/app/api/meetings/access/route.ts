@@ -2,9 +2,7 @@ import {
   auth,
 } from "@clerk/nextjs/server";
 
-import {
-  StreamClient,
-} from "@stream-io/node-sdk";
+import { getStreamServerClient } from "@/lib/streamServer";
 
 /* =========================================================
    TYPES
@@ -24,35 +22,6 @@ const VALID_MODES =
 
 const ACCESS_KEY =
   "cohiva_access_mode";
-
-/* =========================================================
-   STREAM CLIENT
-========================================================= */
-
-const getStreamClient =
-  () => {
-    const apiKey =
-      process.env
-        .NEXT_PUBLIC_STREAM_API_KEY;
-
-    const apiSecret =
-      process.env
-        .STREAM_API_SECRET;
-
-    if (
-      !apiKey ||
-      !apiSecret
-    ) {
-      throw new Error(
-        "Stream server configuration is missing."
-      );
-    }
-
-    return new StreamClient(
-      apiKey,
-      apiSecret
-    );
-  };
 
 /* =========================================================
    NORMALIZE MODE
@@ -87,7 +56,7 @@ const getCall =
       string
   ) => {
     const client =
-      getStreamClient();
+      getStreamServerClient();
 
     const call =
       client.video.call(

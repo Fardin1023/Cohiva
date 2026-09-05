@@ -2,9 +2,7 @@ import {
   auth,
 } from "@clerk/nextjs/server";
 
-import {
-  StreamClient,
-} from "@stream-io/node-sdk";
+import { getStreamServerClient } from "@/lib/streamServer";
 
 import {
   randomUUID,
@@ -29,35 +27,6 @@ const MAX_MESSAGE_LENGTH =
 
 const MAX_HISTORY =
   100;
-
-/* =========================================================
-   STREAM CLIENT
-========================================================= */
-
-const getStreamClient =
-  () => {
-    const apiKey =
-      process.env
-        .NEXT_PUBLIC_STREAM_API_KEY;
-
-    const apiSecret =
-      process.env
-        .STREAM_API_SECRET;
-
-    if (
-      !apiKey ||
-      !apiSecret
-    ) {
-      throw new Error(
-        "Stream server configuration is missing."
-      );
-    }
-
-    return new StreamClient(
-      apiKey,
-      apiSecret
-    );
-  };
 
 /* =========================================================
    HELPERS
@@ -196,6 +165,15 @@ export async function GET(
       await MeetingChatMessage
         .find({
           callId,
+        })
+        .select({
+          _id: 1,
+          messageId: 1,
+          senderId: 1,
+          senderName: 1,
+          senderImage: 1,
+          text: 1,
+          createdAt: 1,
         })
         .sort({
           createdAt: -1,
@@ -383,11 +361,22 @@ export async function POST(
       }
 
       storedMessage =
-        await MeetingChatMessage.findOne({
-          callId,
+        await MeetingChatMessage
+          .findOne({
+            callId,
 
-          messageId,
-        });
+            messageId,
+          })
+          .select({
+            _id: 1,
+            messageId: 1,
+            senderId: 1,
+            senderName: 1,
+            senderImage: 1,
+            text: 1,
+            createdAt: 1,
+          })
+          .lean();
 
       if (
         !storedMessage
@@ -419,7 +408,7 @@ export async function POST(
     ) {
       try {
         const streamClient =
-          getStreamClient();
+          getStreamServerClient();
 
         const call =
           streamClient.video.call(

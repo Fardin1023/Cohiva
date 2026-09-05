@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
-import { StreamClient } from "@stream-io/node-sdk";
+import { getStreamServerClient } from "@/lib/streamServer";
 
 import connectMongoDB from "@/lib/mongodb";
 import MeetingAttendance from "@/models/MeetingAttendance";
@@ -1344,39 +1344,8 @@ export async function GET(
        TEACHER VERIFICATION
     ===================================================== */
 
-    const apiKey =
-      process.env
-        .NEXT_PUBLIC_STREAM_API_KEY;
-
-    const apiSecret =
-      process.env
-        .STREAM_API_SECRET;
-
-    if (
-      !apiKey ||
-      !apiSecret
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Stream configuration is missing.",
-        },
-        {
-          status:
-            500,
-        }
-      );
-    }
-
     const streamClient =
-      new StreamClient(
-        apiKey,
-        apiSecret,
-        {
-          timeout:
-            10_000,
-        }
-      );
+      getStreamServerClient();
 
     const queryResult =
       await streamClient.video.queryCalls({
