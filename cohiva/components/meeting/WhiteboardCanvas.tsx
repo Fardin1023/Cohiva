@@ -25,6 +25,7 @@ import type {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -267,9 +268,21 @@ const WhiteboardCanvas = ({
   const canEdit =
     isTeacher ||
     (
+      active &&
       permissionReady &&
       studentDrawingAllowed
     );
+
+  /*
+   * Student view-only mode.
+   *
+   * When true we keep Excalidraw mounted so realtime
+   * updates, panning and zooming continue to work, but
+   * we remove drawing/editing controls from the UI.
+   */
+  const studentViewOnly =
+    !isTeacher &&
+    !canEdit;
 
   /* =====================================================
      REFS
@@ -427,6 +440,54 @@ const WhiteboardCanvas = ({
     );
 
   /* =====================================================
+     PRE-PAINT STUDENT LOCK
+
+     useEffect runs after the browser may paint.
+     useLayoutEffect runs before that paint is shown.
+
+     Every time the board becomes hidden or visible,
+     students discard the previous permission result and
+     start locked. A fresh authoritative permission check
+     may unlock them only after the board is opened.
+  ===================================================== */
+
+  useLayoutEffect(() => {
+    if (
+      isTeacher
+    ) {
+      return;
+    }
+
+    /*
+     * Invalidate any permission request from the previous
+     * whiteboard-open cycle.
+     */
+    permissionRequestRef.current +=
+      1;
+
+    setPermissionReady(
+      false
+    );
+
+    setStudentDrawingAllowed(
+      false
+    );
+
+    const api =
+      apiRef.current;
+
+    if (api) {
+      api.setActiveTool({
+        type:
+          "hand",
+      });
+    }
+  }, [
+    active,
+    isTeacher,
+  ]);
+
+  /* =====================================================
      AUTHORITATIVE PERMISSION REFRESH
 
      This uses call.get().
@@ -532,15 +593,18 @@ const WhiteboardCanvas = ({
     );
 
   /* =====================================================
-     THE MAIN GLITCH FIX
+     AUTHORITATIVE PERMISSION CHECK ON OPEN
 
-     Every time the STUDENT actually
-     OPENS the whiteboard:
+     Student sequence:
 
-     1. lock immediately
-     2. fetch current call
-     3. read latest permission
-     4. only then unlock if allowed
+       Board clicked
+           ↓
+       useLayoutEffect locks before browser paint
+           ↓
+       call.get() fetches latest permission
+           ↓
+       explicit true → unlock
+       false / missing / error → remain view-only
   ===================================================== */
 
   useEffect(() => {
@@ -552,11 +616,8 @@ const WhiteboardCanvas = ({
     }
 
     /*
-     * Teacher never loses editing.
-     *
-     * We still refresh so teacher's
-     * status badge knows whether
-     * students are allowed.
+     * Teacher always edits. We still refresh so the
+     * toolbar badge reflects whether students may draw.
      */
     if (
       isTeacher
@@ -569,10 +630,10 @@ const WhiteboardCanvas = ({
     }
 
     /*
-     * Student must fail closed.
+     * Student has already been locked before paint by the
+     * layout effect. Only the authoritative result can
+     * unlock drawing.
      */
-    hardLockStudent();
-
     void refreshWhiteboardPermission(
       false
     );
@@ -580,7 +641,6 @@ const WhiteboardCanvas = ({
     active,
     call,
     isTeacher,
-    hardLockStudent,
     refreshWhiteboardPermission,
   ]);
 
@@ -621,13 +681,19 @@ const WhiteboardCanvas = ({
           /*
            * Whiteboard is hidden.
            *
-           * Student will be hard-locked
-           * and refreshed next time they
-           * actually open it.
+           * Never preserve an old "allowed" state for a
+           * student. The next opening must begin locked and
+           * perform a fresh authoritative permission check.
            */
           if (
             !active
           ) {
+            if (
+              !isTeacher
+            ) {
+              hardLockStudent();
+            }
+
             return;
           }
 
@@ -716,6 +782,7 @@ const WhiteboardCanvas = ({
     call,
     active,
     isTeacher,
+    hardLockStudent,
     refreshWhiteboardPermission,
   ]);
 
@@ -2173,59 +2240,61 @@ const WhiteboardCanvas = ({
             : "Student"}
         </div>
 
-        <button
-          type="button"
-          onClick={
-            usePen
-          }
-          disabled={
-            !canEdit
-          }
-          className={`rounded-xl px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-35 ${
-            activeTool ===
-            "pen"
-              ? "bg-[#403A35] text-white"
-              : "bg-white text-[#403A35]"
-          }`}
-        >
-          ✏ Pen
-        </button>
+        {/*
+         * Editing tools are only visible to:
+         * - the teacher, or
+         * - a student whose drawing permission is explicitly allowed.
+         *
+         * View-only students should not see disabled drawing controls.
+         */}
+        {(isTeacher || canEdit) && (
+          <>
+            <button
+              type="button"
+              onClick={
+                usePen
+              }
+              className={`rounded-xl px-3 py-2 text-sm font-bold transition ${
+                activeTool ===
+                "pen"
+                  ? "bg-[#403A35] text-white"
+                  : "bg-white text-[#403A35]"
+              }`}
+            >
+              ✏ Pen
+            </button>
 
-        <button
-          type="button"
-          onClick={
-            useHighlighter
-          }
-          disabled={
-            !canEdit
-          }
-          className={`rounded-xl px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-35 ${
-            activeTool ===
-            "highlighter"
-              ? "bg-[#FACC15] text-[#403A35]"
-              : "bg-white text-[#403A35]"
-          }`}
-        >
-          🖍 Highlighter
-        </button>
+            <button
+              type="button"
+              onClick={
+                useHighlighter
+              }
+              className={`rounded-xl px-3 py-2 text-sm font-bold transition ${
+                activeTool ===
+                "highlighter"
+                  ? "bg-[#FACC15] text-[#403A35]"
+                  : "bg-white text-[#403A35]"
+              }`}
+            >
+              🖍 Highlighter
+            </button>
 
-        <button
-          type="button"
-          onClick={
-            useEraser
-          }
-          disabled={
-            !canEdit
-          }
-          className={`rounded-xl px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-35 ${
-            activeTool ===
-            "eraser"
-              ? "bg-[#CC3A63] text-white"
-              : "bg-white text-[#403A35]"
-          }`}
-        >
-          ⌫ Eraser
-        </button>
+            <button
+              type="button"
+              onClick={
+                useEraser
+              }
+              className={`rounded-xl px-3 py-2 text-sm font-bold transition ${
+                activeTool ===
+                "eraser"
+                  ? "bg-[#CC3A63] text-white"
+                  : "bg-white text-[#403A35]"
+              }`}
+            >
+              ⌫ Eraser
+            </button>
+          </>
+        )}
 
         <button
           type="button"
@@ -2333,6 +2402,49 @@ const WhiteboardCanvas = ({
 
       <div className="relative min-h-0 flex-1">
 
+        {/*
+         * View-only students keep the canvas itself, zoom controls and
+         * panning, but the Excalidraw editing chrome is hidden.
+         *
+         * The selectors are scoped to this whiteboard instance only, so
+         * the teacher and students with drawing access keep the full UI.
+         */}
+        {studentViewOnly && (
+          <style>
+            {`
+              /*
+               * Excalidraw has changed some toolbar class names across
+               * releases, so we target both the older and newer names.
+               * This CSS is only active for a Cohiva view-only student.
+               */
+              .cohiva-student-view-only .App-menu_top,
+              .cohiva-student-view-only .App-toolbar,
+              .cohiva-student-view-only .App-toolbar-container,
+              .cohiva-student-view-only .App-toolbar-content,
+              .cohiva-student-view-only .layer-ui__wrapper__top-left,
+              .cohiva-student-view-only .layer-ui__wrapper__top-right,
+              .cohiva-student-view-only .layer-ui__wrapper__top-right--compact,
+              .cohiva-student-view-only .excalidraw-ui-top-right,
+              .cohiva-student-view-only .main-menu-trigger,
+              .cohiva-student-view-only .sidebar-trigger,
+              .cohiva-student-view-only .mobile-misc-tools-container,
+              .cohiva-student-view-only .tray-misc-tools-container,
+              .cohiva-student-view-only .undo-redo-buttons,
+              .cohiva-student-view-only .undo-button-container {
+                display: none !important;
+              }
+            `}
+          </style>
+        )}
+
+        <div
+          className={`h-full w-full ${
+            studentViewOnly
+              ? "cohiva-student-view-only"
+              : ""
+          }`}
+        >
+
         <Excalidraw
   excalidrawAPI={(api) => {
     /*
@@ -2358,6 +2470,16 @@ const WhiteboardCanvas = ({
             !canEdit
           }
 
+          /*
+           * Official Excalidraw UI suppression for view-only students.
+           * Unlike CSS alone, zen mode is handled by Excalidraw itself,
+           * so the drawing toolbar/menu/library controls do not render.
+           * The CSS above remains as a fallback across package versions.
+           */
+          zenModeEnabled={
+            studentViewOnly
+          }
+
           initialData={{
             appState: {
               viewBackgroundColor:
@@ -2381,6 +2503,8 @@ const WhiteboardCanvas = ({
             },
           }}
         />
+
+        </div>
 
         {/* =================================================
             HARD STUDENT GATE

@@ -146,7 +146,9 @@ const MeetingRoom = ({
   const client =
     useStreamVideoClient();
 
-  const { user } =
+  const {
+    user,
+  } =
     useUser();
 
   const userId =
@@ -434,10 +436,6 @@ const MeetingRoom = ({
     userId,
   ]);
 
-  /* =====================================================
-     RENDER STATES
-  ===================================================== */
-
   if (
     !client ||
     !userId
@@ -504,7 +502,7 @@ const MeetingRoom = ({
 export default MeetingRoom;
 
 /* =========================================================
-   MEETING EXPERIENCE
+   EXPERIENCE
 ========================================================= */
 
 const MeetingExperience = ({
@@ -543,7 +541,7 @@ const MeetingExperience = ({
 };
 
 /* =========================================================
-   MEETING LOBBY
+   LOBBY
 ========================================================= */
 
 const MeetingLobby = ({
@@ -625,10 +623,6 @@ const MeetingLobby = ({
   const joiningRef =
     useRef(false);
 
-  /* =====================================================
-     ENSURE MEMBERSHIP
-  ===================================================== */
-
   const ensureMembership =
     useCallback(
       async () => {
@@ -667,10 +661,6 @@ const MeetingLobby = ({
         callId,
       ]
     );
-
-  /* =====================================================
-     JOIN APPROVED
-  ===================================================== */
 
   const joinApproved =
     useCallback(
@@ -723,10 +713,6 @@ const MeetingLobby = ({
         callingState,
       ]
     );
-
-  /* =====================================================
-     WAITING ROOM POLLING
-  ===================================================== */
 
   useEffect(() => {
     if (
@@ -818,10 +804,6 @@ const MeetingLobby = ({
     joinApproved,
   ]);
 
-  /* =====================================================
-     ACCESS MODE CHANGED WHILE WAITING
-  ===================================================== */
-
   useEffect(() => {
     if (
       teacher ||
@@ -884,10 +866,6 @@ const MeetingLobby = ({
     joinApproved,
   ]);
 
-  /* =====================================================
-     CAMERA
-  ===================================================== */
-
   const toggleCamera =
     async () => {
       try {
@@ -898,7 +876,6 @@ const MeetingLobby = ({
         cameraError
       ) {
         console.error(
-          "Camera error:",
           cameraError
         );
 
@@ -907,10 +884,6 @@ const MeetingLobby = ({
         );
       }
     };
-
-  /* =====================================================
-     MICROPHONE
-  ===================================================== */
 
   const toggleMicrophone =
     async () => {
@@ -922,7 +895,6 @@ const MeetingLobby = ({
         microphoneError
       ) {
         console.error(
-          "Microphone error:",
           microphoneError
         );
 
@@ -931,10 +903,6 @@ const MeetingLobby = ({
         );
       }
     };
-
-  /* =====================================================
-     JOIN / ASK TO JOIN
-  ===================================================== */
 
   const joinMeeting =
     async () => {
@@ -1011,16 +979,13 @@ const MeetingLobby = ({
               body:
                 JSON.stringify({
                   callId,
-
                   action:
                     "request",
-
                   name:
                     user.fullName ||
                     user.username ||
                     user.firstName ||
                     "Participant",
-
                   image:
                     user.imageUrl ||
                     "",
@@ -1067,7 +1032,6 @@ const MeetingLobby = ({
         requestError
       ) {
         console.error(
-          "Ask to join error:",
           requestError
         );
 
@@ -1084,10 +1048,6 @@ const MeetingLobby = ({
       }
     };
 
-  /* =====================================================
-     COPY INVITE
-  ===================================================== */
-
   const copyInvite =
     async () => {
       try {
@@ -1100,11 +1060,10 @@ const MeetingLobby = ({
         );
 
         window.setTimeout(
-          () => {
+          () =>
             setCopied(
               false
-            );
-          },
+            ),
           1800
         );
       } catch {
@@ -1122,16 +1081,10 @@ const MeetingLobby = ({
     accessStatus ===
     "requesting";
 
-  /* =====================================================
-     LOBBY UI
-  ===================================================== */
-
   return (
     <main className="flex h-dvh w-full items-center justify-center overflow-hidden bg-[#F9F0E0] p-4 lg:p-6">
 
       <div className="grid h-full max-h-[850px] w-full max-w-[1450px] overflow-hidden rounded-[30px] bg-[#FFF7EB] shadow-[0_30px_90px_rgba(61,55,50,0.16)] lg:grid-cols-[1.15fr_0.9fr]">
-
-        {/* PREVIEW */}
 
         <section className="relative min-h-0 overflow-hidden bg-[#302B27]">
 
@@ -1162,8 +1115,6 @@ const MeetingLobby = ({
           )}
 
         </section>
-
-        {/* OPTIONS */}
 
         <section className="flex min-h-0 flex-col overflow-y-auto p-6 lg:p-8">
 
@@ -1218,8 +1169,6 @@ const MeetingLobby = ({
               </div>
             )}
 
-            {/* CAMERA / MICROPHONE */}
-
             <div className="mt-5 grid grid-cols-2 gap-3">
 
               <button
@@ -1229,7 +1178,6 @@ const MeetingLobby = ({
                 }
                 className="rounded-2xl bg-[#F9F0E0] p-4 text-sm font-bold text-[#3D3732]"
               >
-
                 <span className="mb-1 block text-xl">
                   {cameraOff
                     ? "📷"
@@ -1239,7 +1187,6 @@ const MeetingLobby = ({
                 {cameraOff
                   ? "Camera off"
                   : "Camera on"}
-
               </button>
 
               <button
@@ -1249,7 +1196,6 @@ const MeetingLobby = ({
                 }
                 className="rounded-2xl bg-[#F9F0E0] p-4 text-sm font-bold text-[#3D3732]"
               >
-
                 <span className="mb-1 block text-xl">
                   {microphoneOff
                     ? "🔇"
@@ -1259,16 +1205,12 @@ const MeetingLobby = ({
                 {microphoneOff
                   ? "Mic off"
                   : "Mic on"}
-
               </button>
 
             </div>
 
-            {/* WAITING */}
-
             {waiting && (
               <div className="mt-4 rounded-2xl bg-[#A2AB73]/10 p-4 text-center">
-
                 <div className="text-2xl">
                   ⏳
                 </div>
@@ -1280,32 +1222,23 @@ const MeetingLobby = ({
                 <p className="mt-1 text-xs text-[#756E64]">
                   You&apos;ll enter automatically once approved.
                 </p>
-
               </div>
             )}
-
-            {/* DENIED */}
 
             {accessStatus ===
               "denied" && (
               <div className="mt-4 rounded-2xl bg-[#CC3A63]/10 p-4 text-center">
-
                 <p className="font-black text-[#CC3A63]">
                   Request denied
                 </p>
-
               </div>
             )}
-
-            {/* ERROR */}
 
             {error && (
               <div className="mt-4 rounded-xl bg-[#CC3A63]/10 p-3 text-xs font-bold text-[#CC3A63]">
                 {error}
               </div>
             )}
-
-            {/* JOIN */}
 
             {!waiting && (
               <button
@@ -1342,8 +1275,6 @@ const MeetingLobby = ({
               </button>
             )}
 
-            {/* COPY */}
-
             <button
               type="button"
               onClick={() =>
@@ -1355,8 +1286,6 @@ const MeetingLobby = ({
                 ? "✓ Link copied"
                 : "Copy invite link"}
             </button>
-
-            {/* BACK */}
 
             <button
               type="button"
@@ -1430,10 +1359,6 @@ const LiveMeeting = ({
       call?.isCreatedByMe
     );
 
-  /* =====================================================
-     PERMISSIONS
-  ===================================================== */
-
   const storedPermissions =
     custom?.cohiva_permissions as
       | Partial<CohivaPermissions>
@@ -1442,16 +1367,10 @@ const LiveMeeting = ({
   const permissions:
     CohivaPermissions = {
     ...DEFAULT_COHIVA_PERMISSIONS,
-
     ...storedPermissions,
-
     studentRecording:
       false,
   };
-
-  /* =====================================================
-     UI STATE
-  ===================================================== */
 
   const [
     activeView,
@@ -1503,10 +1422,6 @@ const LiveMeeting = ({
   ] =
     useState(false);
 
-  /* =====================================================
-     RAISED HAND
-  ===================================================== */
-
   const [
     myHandRaised,
     setMyHandRaised,
@@ -1557,10 +1472,6 @@ const LiveMeeting = ({
       > | null
     >(null);
 
-  /* =====================================================
-     REACTIONS
-  ===================================================== */
-
   const [
     floatingReactions,
     setFloatingReactions,
@@ -1576,10 +1487,6 @@ const LiveMeeting = ({
     setAnnouncement,
   ] =
     useState("");
-
-  /* =====================================================
-     CHAT NOTIFICATIONS
-  ===================================================== */
 
   const [
     chatUnreadCount,
@@ -1602,20 +1509,12 @@ const LiveMeeting = ({
       > | null
     >(null);
 
-  /* =====================================================
-     ATTENDANCE
-  ===================================================== */
-
   const attendanceLeaveTimerRef =
     useRef<
       ReturnType<
         typeof setTimeout
       > | null
     >(null);
-
-  /* =====================================================
-     ACCESSIBILITY
-  ===================================================== */
 
   const [
     accessibility,
@@ -1624,16 +1523,12 @@ const LiveMeeting = ({
     useState<AccessibilitySettings>({
       captionsVisible:
         false,
-
       captionSize:
         "medium",
-
       highContrast:
         false,
-
       reduceMotion:
         false,
-
       hideReactions:
         false,
     });
@@ -1657,7 +1552,6 @@ const LiveMeeting = ({
             current
           ) => ({
             ...current,
-
             ...JSON.parse(
               saved
             ),
@@ -1668,7 +1562,6 @@ const LiveMeeting = ({
       accessibilityError
     ) {
       console.error(
-        "Accessibility load error:",
         accessibilityError
       );
     }
@@ -1678,7 +1571,6 @@ const LiveMeeting = ({
     try {
       window.localStorage.setItem(
         "cohiva-accessibility",
-
         JSON.stringify(
           accessibility
         )
@@ -1687,7 +1579,6 @@ const LiveMeeting = ({
       accessibilityError
     ) {
       console.error(
-        "Accessibility save error:",
         accessibilityError
       );
     }
@@ -1722,10 +1613,8 @@ const LiveMeeting = ({
 
     const payloadBase = {
       callId,
-
       name:
         userName,
-
       image:
         userImage,
     };
@@ -1736,11 +1625,10 @@ const LiveMeeting = ({
           | "join"
           | "leave"
           | "heartbeat",
-
         keepalive =
           false
-      ) => {
-        return fetch(
+      ) =>
+        fetch(
           "/api/meetings/attendance",
           {
             method:
@@ -1754,26 +1642,17 @@ const LiveMeeting = ({
             body:
               JSON.stringify({
                 ...payloadBase,
-
                 action,
               }),
 
             keepalive,
           }
         );
-      };
 
     void postAttendance(
       "join"
     ).catch(
-      (
-        attendanceError
-      ) => {
-        console.error(
-          "Attendance join error:",
-          attendanceError
-        );
-      }
+      console.error
     );
 
     const heartbeatTimer =
@@ -1782,14 +1661,7 @@ const LiveMeeting = ({
           void postAttendance(
             "heartbeat"
           ).catch(
-            (
-              attendanceError
-            ) => {
-              console.error(
-                "Attendance heartbeat error:",
-                attendanceError
-              );
-            }
+            console.error
           );
         },
         20_000
@@ -1842,14 +1714,7 @@ const LiveMeeting = ({
               "leave",
               true
             ).catch(
-              (
-                attendanceError
-              ) => {
-                console.error(
-                  "Attendance leave error:",
-                  attendanceError
-                );
-              }
+              console.error
             );
           },
           2500
@@ -1863,7 +1728,7 @@ const LiveMeeting = ({
   ]);
 
   /* =====================================================
-     SEND CLASSROOM EVENT
+     CLASSROOM EVENTS
   ===================================================== */
 
   const sendClassroomEvent =
@@ -1890,13 +1755,10 @@ const LiveMeeting = ({
               body:
                 JSON.stringify({
                   callId,
-
                   senderName:
                     userName,
-
                   senderImage:
                     userImage,
-
                   ...body,
                 }),
             }
@@ -1927,7 +1789,7 @@ const LiveMeeting = ({
     );
 
   /* =====================================================
-     HAND + REACTION LISTENER
+     HAND + REACTION
   ===================================================== */
 
   useEffect(() => {
@@ -1985,8 +1847,6 @@ const LiveMeeting = ({
               ? payload.senderImage
               : "";
 
-          /* HAND */
-
           if (
             payload.action ===
             "hand"
@@ -2037,13 +1897,10 @@ const LiveMeeting = ({
                     {
                       userId:
                         senderId,
-
                       name:
                         senderName,
-
                       image:
                         senderImage,
-
                       raisedAt:
                         typeof payload.createdAt ===
                         "string"
@@ -2086,10 +1943,8 @@ const LiveMeeting = ({
               setHandNotification({
                 userId:
                   senderId,
-
                 name:
                   senderName,
-
                 image:
                   senderImage,
               });
@@ -2108,9 +1963,6 @@ const LiveMeeting = ({
                     setHandNotification(
                       null
                     );
-
-                    handNotificationTimerRef.current =
-                      null;
                   },
                   4500
                 );
@@ -2118,8 +1970,6 @@ const LiveMeeting = ({
 
             return;
           }
-
-          /* REACTION */
 
           if (
             payload.action ===
@@ -2134,10 +1984,8 @@ const LiveMeeting = ({
                 "string"
                   ? payload.eventId
                   : crypto.randomUUID(),
-
               emoji:
                 payload.emoji,
-
               name:
                 senderName,
             };
@@ -2149,7 +1997,6 @@ const LiveMeeting = ({
                 ...current.slice(
                   -5
                 ),
-
                 reaction,
               ]
             );
@@ -2189,7 +2036,7 @@ const LiveMeeting = ({
   ]);
 
   /* =====================================================
-     CHAT NOTIFICATION LISTENER
+     CHAT
   ===================================================== */
 
   useEffect(() => {
@@ -2250,46 +2097,22 @@ const LiveMeeting = ({
 
           setChatNotification({
             senderId,
-
             senderName:
               typeof payload.senderName ===
               "string"
                 ? payload.senderName
                 : "Participant",
-
             senderImage:
               typeof payload.senderImage ===
               "string"
                 ? payload.senderImage
                 : "",
-
             text:
               typeof payload.text ===
               "string"
                 ? payload.text
                 : "New message",
           });
-
-          if (
-            chatNotificationTimerRef.current
-          ) {
-            clearTimeout(
-              chatNotificationTimerRef.current
-            );
-          }
-
-          chatNotificationTimerRef.current =
-            setTimeout(
-              () => {
-                setChatNotification(
-                  null
-                );
-
-                chatNotificationTimerRef.current =
-                  null;
-              },
-              4000
-            );
         }
       );
 
@@ -2301,10 +2124,6 @@ const LiveMeeting = ({
     userId,
     chatOpen,
   ]);
-
-  /* =====================================================
-     CLEAR CHAT WHEN OPEN
-  ===================================================== */
 
   useEffect(() => {
     if (
@@ -2320,23 +2139,12 @@ const LiveMeeting = ({
     setChatNotification(
       null
     );
-
-    if (
-      chatNotificationTimerRef.current
-    ) {
-      clearTimeout(
-        chatNotificationTimerRef.current
-      );
-
-      chatNotificationTimerRef.current =
-        null;
-    }
   }, [
     chatOpen,
   ]);
 
   /* =====================================================
-     REMOVE STALE HAND
+     PARTICIPANT LEFT
   ===================================================== */
 
   useEffect(() => {
@@ -2411,7 +2219,19 @@ const LiveMeeting = ({
   ]);
 
   /* =====================================================
-     TEACHER ENDED CALL
+     ★ END CALL FOR EVERYONE
+
+     Teacher executes:
+       call.endCall()
+
+     Stream then emits:
+       call.ended
+
+     to every connected client.
+
+     EVERYONE redirects home.
+
+     DO NOT use call.session_ended here.
   ===================================================== */
 
   useEffect(() => {
@@ -2421,19 +2241,23 @@ const LiveMeeting = ({
       return;
     }
 
-    let handled =
+    let alreadyHandled =
       false;
 
     const handleCallEnded =
       () => {
         if (
-          handled
+          alreadyHandled
         ) {
           return;
         }
 
-        handled =
+        alreadyHandled =
           true;
+
+        /*
+         * Clear temporary meeting state before routing.
+         */
 
         setChatNotification(
           null
@@ -2467,6 +2291,18 @@ const LiveMeeting = ({
           false
         );
 
+        setReactionMenuOpen(
+          false
+        );
+
+        setRaisedHandsOpen(
+          false
+        );
+
+        /*
+         * Teacher + every participant go home.
+         */
+
         router.replace(
           "/"
         );
@@ -2487,36 +2323,6 @@ const LiveMeeting = ({
   ]);
 
   /* =====================================================
-     TIMER CLEANUP
-  ===================================================== */
-
-  useEffect(() => {
-    return () => {
-      if (
-        chatNotificationTimerRef.current
-      ) {
-        clearTimeout(
-          chatNotificationTimerRef.current
-        );
-
-        chatNotificationTimerRef.current =
-          null;
-      }
-
-      if (
-        handNotificationTimerRef.current
-      ) {
-        clearTimeout(
-          handNotificationTimerRef.current
-        );
-
-        handNotificationTimerRef.current =
-          null;
-      }
-    };
-  }, []);
-
-  /* =====================================================
      TOGGLE HAND
   ===================================================== */
 
@@ -2530,95 +2336,30 @@ const LiveMeeting = ({
           next
         );
 
-        if (
-          userId
-        ) {
-          setRaisedHands(
-            (
-              current
-            ) => {
-              const updated =
-                new Set(
-                  current
-                );
-
-              if (
-                next
-              ) {
-                updated.add(
-                  userId
-                );
-              } else {
-                updated.delete(
-                  userId
-                );
-              }
-
-              return updated;
-            }
-          );
-        }
-
         try {
           await sendClassroomEvent({
             action:
               "hand",
-
             raised:
               next,
           });
         } catch (
-          handError
+          error
         ) {
           console.error(
-            "Raise hand error:",
-            handError
+            error
           );
 
           setMyHandRaised(
             !next
           );
-
-          if (
-            userId
-          ) {
-            setRaisedHands(
-              (
-                current
-              ) => {
-                const updated =
-                  new Set(
-                    current
-                  );
-
-                if (
-                  next
-                ) {
-                  updated.delete(
-                    userId
-                  );
-                } else {
-                  updated.add(
-                    userId
-                  );
-                }
-
-                return updated;
-              }
-            );
-          }
         }
       },
       [
         myHandRaised,
         sendClassroomEvent,
-        userId,
       ]
     );
-
-  /* =====================================================
-     SEND REACTION
-  ===================================================== */
 
   const sendReaction =
     async (
@@ -2632,21 +2373,19 @@ const LiveMeeting = ({
         await sendClassroomEvent({
           action:
             "reaction",
-
           emoji,
         });
       } catch (
-        reactionError
+        error
       ) {
         console.error(
-          "Reaction error:",
-          reactionError
+          error
         );
       }
     };
 
   /* =====================================================
-     KEYBOARD SHORTCUTS
+     SHORTCUTS
   ===================================================== */
 
   useEffect(() => {
@@ -2685,11 +2424,7 @@ const LiveMeeting = ({
         ) {
           event.preventDefault();
 
-          void call.microphone
-            .toggle()
-            .catch(
-              () => {}
-            );
+          void call.microphone.toggle();
         }
 
         if (
@@ -2698,11 +2433,7 @@ const LiveMeeting = ({
         ) {
           event.preventDefault();
 
-          void call.camera
-            .toggle()
-            .catch(
-              () => {}
-            );
+          void call.camera.toggle();
         }
 
         if (
@@ -2790,10 +2521,6 @@ const LiveMeeting = ({
     toggleHand,
   ]);
 
-  /* =====================================================
-     COPY INVITE
-  ===================================================== */
-
   const copyInvite =
     async () => {
       try {
@@ -2806,26 +2533,20 @@ const LiveMeeting = ({
         );
 
         window.setTimeout(
-          () => {
+          () =>
             setCopied(
               false
-            );
-          },
+            ),
           1800
         );
       } catch (
-        copyError
+        error
       ) {
         console.error(
-          "Invite copy error:",
-          copyError
+          error
         );
       }
     };
-
-  /* =====================================================
-     HAND QUEUE
-  ===================================================== */
 
   const handList =
     Array.from(
@@ -2843,10 +2564,6 @@ const LiveMeeting = ({
         ).getTime()
     );
 
-  /* =====================================================
-     LIVE MEETING UI
-  ===================================================== */
-
   return (
     <main
       className={`cohiva-meeting-root flex h-dvh w-full flex-col overflow-hidden bg-[#24211F] text-white ${
@@ -2855,8 +2572,6 @@ const LiveMeeting = ({
           : ""
       }`}
     >
-
-      {/* REDUCED MOTION */}
 
       {accessibility.reduceMotion && (
         <style>
@@ -2867,25 +2582,17 @@ const LiveMeeting = ({
               animation-duration: 0.001ms !important;
               animation-iteration-count: 1 !important;
               transition-duration: 0.001ms !important;
-              scroll-behavior: auto !important;
             }
           `}
         </style>
       )}
 
-      {/* SCREEN READER */}
-
       <div
         className="sr-only"
         aria-live="polite"
-        aria-atomic="true"
       >
         {announcement}
       </div>
-
-      {/* =================================================
-          RECORDING
-      ================================================= */}
 
       <CohivaRecordingIndicator />
 
@@ -2896,8 +2603,6 @@ const LiveMeeting = ({
       ================================================= */}
 
       <header className="flex h-[64px] shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-[#302B27] px-3 lg:px-5">
-
-        {/* LEFT */}
 
         <div className="flex min-w-0 items-center gap-2">
 
@@ -2911,11 +2616,8 @@ const LiveMeeting = ({
             </span>
           )}
 
-          {/* PARTICIPANTS */}
-
           <button
             type="button"
-            aria-label={`${participantCount} participants`}
             onClick={() =>
               setParticipantsOpen(
                 true
@@ -2926,121 +2628,24 @@ const LiveMeeting = ({
             👥 {participantCount}
           </button>
 
-          {/* RAISED HANDS */}
-
           {teacher &&
             raisedHands.size >
               0 && (
-              <div className="relative">
-
-                <button
-                  type="button"
-                  aria-label={`${raisedHands.size} raised hands`}
-                  onClick={() =>
-                    setRaisedHandsOpen(
-                      (
-                        current
-                      ) =>
-                        !current
-                    )
-                  }
-                  className="rounded-lg bg-[#FACC15] px-3 py-2 text-xs font-black text-[#403A35]"
-                >
-                  ✋ {raisedHands.size}
-                </button>
-
-                {raisedHandsOpen && (
-                  <div className="absolute left-0 top-[44px] z-[230] w-[280px] overflow-hidden rounded-[20px] border border-[#403A35]/10 bg-[#FFF7EB] text-[#3D3732] shadow-2xl">
-
-                    <div className="border-b border-[#403A35]/10 px-4 py-3">
-
-                      <p className="text-[9px] font-black uppercase tracking-[0.16em] text-[#CC3A63]">
-                        Raised Hands
-                      </p>
-
-                      <p className="mt-1 text-xs font-bold text-[#756E64]">
-                        {raisedHands.size} waiting
-                      </p>
-
-                    </div>
-
-                    <div className="max-h-[270px] overflow-y-auto p-2">
-
-                      {handList.map(
-                        (
-                          person,
-                          index
-                        ) => (
-                          <div
-                            key={
-                              person.userId
-                            }
-                            className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-[#F9F0E0]"
-                          >
-
-                            <span className="w-5 text-center text-[10px] font-black text-[#756E64]">
-                              {index + 1}.
-                            </span>
-
-                            {person.image ? (
-                              <img
-                                src={
-                                  person.image
-                                }
-                                alt=""
-                                className="h-9 w-9 rounded-full object-cover"
-                              />
-                            ) : (
-                              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#403A35] text-xs font-black text-white">
-                                {person.name
-                                  .charAt(
-                                    0
-                                  )
-                                  .toUpperCase()}
-                              </div>
-                            )}
-
-                            <div className="min-w-0 flex-1">
-
-                              <p className="truncate text-xs font-black">
-                                {person.name}
-                              </p>
-
-                              <p className="text-[9px] font-bold text-[#737C4C]">
-                                ✋ Hand raised
-                              </p>
-
-                            </div>
-
-                          </div>
-                        )
-                      )}
-
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setRaisedHandsOpen(
-                          false
-                        );
-
-                        setParticipantsOpen(
-                          true
-                        );
-                      }}
-                      className="w-full border-t border-[#403A35]/10 bg-white px-4 py-3 text-xs font-black text-[#CC3A63]"
-                    >
-                      Open participants →
-                    </button>
-
-                  </div>
-                )}
-
-              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setRaisedHandsOpen(
+                    (
+                      current
+                    ) =>
+                      !current
+                  )
+                }
+                className="rounded-lg bg-[#FACC15] px-3 py-2 text-xs font-black text-[#403A35]"
+              >
+                ✋ {raisedHands.size}
+              </button>
             )}
-
-          {/* VIDEO / WHITEBOARD */}
 
           <div className="hidden rounded-xl bg-black/20 p-1 sm:flex">
 
@@ -3082,82 +2687,45 @@ const LiveMeeting = ({
 
         </div>
 
-        {/* RIGHT */}
-
         <div className="flex shrink-0 items-center gap-1.5">
-
-          {/* CHAT */}
 
           <button
             type="button"
-            aria-label={
-              chatUnreadCount >
-              0
-                ? `${chatUnreadCount} unread chat messages`
-                : "Open chat"
-            }
             onClick={() =>
               setChatOpen(
                 true
               )
             }
-            className={`relative rounded-lg px-3 py-2 text-xs font-black ${
-              chatUnreadCount >
-              0
-                ? "bg-[#CC3A63]/20 text-[#F8B2C4]"
-                : "bg-white/10"
-            }`}
+            className="relative rounded-lg bg-white/10 px-3 py-2 text-xs"
           >
             💬
 
             {chatUnreadCount >
               0 && (
-              <span className="absolute -right-2 -top-2 flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[#CC3A63] px-1 text-[8px] font-black text-white">
-                {chatUnreadCount >
-                9
-                  ? "9+"
-                  : chatUnreadCount}
+              <span className="absolute -right-2 -top-2 rounded-full bg-[#CC3A63] px-1.5 text-[8px] font-black">
+                {chatUnreadCount}
               </span>
             )}
-
           </button>
-
-          {/* HAND */}
 
           <button
             type="button"
-            aria-label={
-              myHandRaised
-                ? "Lower hand"
-                : "Raise hand"
-            }
-            aria-pressed={
-              myHandRaised
-            }
             onClick={() =>
               void toggleHand()
             }
-            className={`rounded-lg px-3 py-2 text-xs font-black ${
+            className={`rounded-lg px-3 py-2 text-xs ${
               myHandRaised
                 ? "bg-[#FACC15] text-[#403A35]"
                 : "bg-white/10"
             }`}
           >
-            {myHandRaised
-              ? "✋ ✓"
-              : "✋"}
+            ✋
           </button>
-
-          {/* REACTIONS */}
 
           <div className="relative">
 
             <button
               type="button"
-              aria-label="Open reactions"
-              aria-expanded={
-                reactionMenuOpen
-              }
               onClick={() =>
                 setReactionMenuOpen(
                   (
@@ -3194,7 +2762,7 @@ const LiveMeeting = ({
                           emoji
                         )
                       }
-                      className="flex h-10 w-10 items-center justify-center rounded-xl text-xl transition hover:scale-110 hover:bg-[#F9F0E0]"
+                      className="h-10 w-10 rounded-xl text-xl"
                     >
                       {emoji}
                     </button>
@@ -3206,11 +2774,8 @@ const LiveMeeting = ({
 
           </div>
 
-          {/* ACCESSIBILITY */}
-
           <button
             type="button"
-            aria-label="Accessibility"
             onClick={() =>
               setAccessibilityOpen(
                 true
@@ -3221,12 +2786,9 @@ const LiveMeeting = ({
             ♿
           </button>
 
-          {/* ATTENDANCE */}
-
           {teacher && (
             <button
               type="button"
-              aria-label="Attendance"
               onClick={() =>
                 setAttendanceOpen(
                   true
@@ -3238,30 +2800,23 @@ const LiveMeeting = ({
             </button>
           )}
 
-          {/* PERMISSIONS */}
-
           {teacher && (
             <button
               type="button"
-              aria-label="Meeting settings"
               onClick={() =>
                 setPermissionsOpen(
                   true
                 )
               }
-              className="rounded-lg bg-[#A2AB73]/20 px-3 py-2 text-xs text-[#DCE3B4]"
+              className="rounded-lg bg-[#A2AB73]/20 px-3 py-2 text-xs"
             >
               ⚙
             </button>
           )}
 
-          {/* RECORDING - TEACHER ONLY */}
-
           {teacher && (
             <CohivaRecordingControl />
           )}
-
-          {/* INVITE */}
 
           <button
             type="button"
@@ -3279,171 +2834,11 @@ const LiveMeeting = ({
 
       </header>
 
-      {/* =================================================
-          HAND NOTIFICATION
-      ================================================= */}
-
-      {teacher &&
-        handNotification && (
-        <button
-          type="button"
-          onClick={() => {
-            setHandNotification(
-              null
-            );
-
-            setRaisedHandsOpen(
-              true
-            );
-          }}
-          className="fixed left-4 top-[76px] z-[260] w-[310px] max-w-[calc(100vw-32px)] rounded-[20px] border border-[#FACC15]/40 bg-[#FFF7EB] p-3.5 text-left text-[#3D3732] shadow-2xl"
-        >
-
-          <div className="flex items-center gap-3">
-
-            {handNotification.image ? (
-              <img
-                src={
-                  handNotification.image
-                }
-                alt=""
-                className="h-11 w-11 rounded-full object-cover"
-              />
-            ) : (
-              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#FACC15]/20 text-xl">
-                ✋
-              </div>
-            )}
-
-            <div className="min-w-0 flex-1">
-
-              <p className="text-[9px] font-black uppercase tracking-[0.15em] text-[#CC3A63]">
-                Hand Raised
-              </p>
-
-              <p className="mt-1 truncate text-sm font-black">
-                {handNotification.name}
-              </p>
-
-              <p className="mt-1 text-[10px] font-bold text-[#756E64]">
-                Click to view the hand queue
-              </p>
-
-            </div>
-
-          </div>
-
-        </button>
-      )}
-
-      {/* =================================================
-          CHAT NOTIFICATION
-      ================================================= */}
-
-      {chatNotification &&
-        !chatOpen && (
-        <button
-          type="button"
-          onClick={() =>
-            setChatOpen(
-              true
-            )
-          }
-          className="fixed right-4 top-[76px] z-[260] w-[330px] max-w-[calc(100vw-32px)] rounded-[20px] border border-[#403A35]/10 bg-[#FFF7EB] p-3.5 text-left text-[#3D3732] shadow-2xl"
-        >
-
-          <div className="flex items-start gap-3">
-
-            {chatNotification.senderImage ? (
-              <img
-                src={
-                  chatNotification.senderImage
-                }
-                alt=""
-                className="h-11 w-11 shrink-0 rounded-full object-cover"
-              />
-            ) : (
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#CC3A63]/10">
-                💬
-              </div>
-            )}
-
-            <div className="min-w-0 flex-1">
-
-              <p className="truncate text-xs font-black">
-                {chatNotification.senderName}
-              </p>
-
-              <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-[#756E64]">
-                {chatNotification.text}
-              </p>
-
-              <p className="mt-2 text-[9px] font-black text-[#CC3A63]">
-                Open chat →
-              </p>
-
-            </div>
-
-          </div>
-
-        </button>
-      )}
-
-      {/* =================================================
-          MOBILE VIEW SWITCH
-      ================================================= */}
-
-      <div className="flex h-[44px] shrink-0 bg-[#302B27] px-3 sm:hidden">
-
-        <div className="flex w-full rounded-xl bg-black/20 p-1">
-
-          <button
-            type="button"
-            onClick={() =>
-              setActiveView(
-                "video"
-              )
-            }
-            className={`flex-1 rounded-lg text-xs font-black ${
-              activeView ===
-                "video"
-                ? "bg-[#FFF7EB] text-[#403A35]"
-                : "text-white/60"
-            }`}
-          >
-            🎥 Video
-          </button>
-
-          <button
-            type="button"
-            onClick={() =>
-              setActiveView(
-                "whiteboard"
-              )
-            }
-            className={`flex-1 rounded-lg text-xs font-black ${
-              activeView ===
-                "whiteboard"
-                ? "bg-[#A2AB73]"
-                : "text-white/60"
-            }`}
-          >
-            ✏ Board
-          </button>
-
-        </div>
-
-      </div>
-
-      {/* =================================================
-          WORKSPACE
-      ================================================= */}
+      {/* WORKSPACE */}
 
       <section className="min-h-0 flex-1 overflow-hidden p-2 sm:p-3">
 
         <div className="relative h-full overflow-hidden rounded-[20px] bg-[#181614]">
-
-          {/* VIDEO */}
 
           <div
             className={`absolute inset-0 ${
@@ -3456,19 +2851,15 @@ const LiveMeeting = ({
 
             <SpeakerLayout
               participantsBarPosition="right"
-
               ParticipantViewUISpotlight={
                 CohivaParticipantSpotlightUI
               }
-
               ParticipantViewUIBar={
                 CohivaParticipantBarUI
               }
             />
 
           </div>
-
-          {/* WHITEBOARD */}
 
           <div
             className={`absolute inset-0 ${
@@ -3491,8 +2882,6 @@ const LiveMeeting = ({
 
           </div>
 
-          {/* CAPTIONS */}
-
           <MeetingCaptionsOverlay
             visible={
               accessibility.captionsVisible
@@ -3501,8 +2890,6 @@ const LiveMeeting = ({
               accessibility.captionSize
             }
           />
-
-          {/* REACTIONS */}
 
           {!accessibility.hideReactions && (
             <div className="pointer-events-none absolute inset-x-0 bottom-6 z-[80] flex flex-col items-center gap-2">
@@ -3515,15 +2902,13 @@ const LiveMeeting = ({
                     key={
                       reaction.id
                     }
-                    className="animate-bounce rounded-full bg-[#FFF7EB] px-4 py-2 text-sm font-black text-[#403A35] shadow-xl"
+                    className="rounded-full bg-[#FFF7EB] px-4 py-2 text-sm font-black text-[#403A35]"
                   >
-
                     <span className="mr-2 text-xl">
                       {reaction.emoji}
                     </span>
 
                     {reaction.name}
-
                   </div>
                 )
               )}
@@ -3536,77 +2921,50 @@ const LiveMeeting = ({
       </section>
 
       {/* =================================================
-          CUSTOM STREAM CALL CONTROLS
+          BOTTOM CALL CONTROLS
 
-          IMPORTANT:
-          RecordCallButton is intentionally NOT included.
-
-          This removes Stream's recording button / recording
-          indicator from the bottom bar for BOTH teacher and
-          students.
-
-          Recording is controlled only from Cohiva's
-          teacher-only button in the header.
+          Bottom red button = LEAVE ONLY.
+          It does NOT end class.
       ================================================= */}
 
-      <footer className="flex h-[76px] shrink-0 items-center justify-center overflow-hidden border-t border-white/10 bg-[#302B27] px-3">
+      <footer className="flex h-[76px] shrink-0 items-center justify-center border-t border-white/10 bg-[#302B27] px-3">
 
-        <div className="max-w-full scale-[0.92] sm:scale-100">
+        <div className="str-video__call-controls">
 
-          <div className="str-video__call-controls">
+          <SpeakingWhileMutedNotification>
+            <ToggleAudioPublishingButton />
+          </SpeakingWhileMutedNotification>
 
-            {/* MICROPHONE */}
+          <ToggleVideoPublishingButton />
 
-            <SpeakingWhileMutedNotification>
+          <ReactionsButton />
 
-              <ToggleAudioPublishingButton />
+          <ScreenShareButton />
 
-            </SpeakingWhileMutedNotification>
-
-            {/* CAMERA */}
-
-            <ToggleVideoPublishingButton />
-
-            {/* REACTIONS */}
-
-            <ReactionsButton />
-
-            {/* SCREEN SHARE */}
-
-            <ScreenShareButton />
-
-            {/* LEAVE */}
-
-            <CancelCallButton
-              onLeave={(
+          <CancelCallButton
+            onLeave={(
+              leaveError
+            ) => {
+              if (
                 leaveError
-              ) => {
-                if (
+              ) {
+                console.error(
+                  "Leave call error:",
                   leaveError
-                ) {
-                  console.error(
-                    "Leave call error:",
-                    leaveError
-                  );
-
-                  return;
-                }
-
-                router.replace(
-                  "/"
                 );
-              }}
-            />
 
-          </div>
+                return;
+              }
+
+              router.replace(
+                "/"
+              );
+            }}
+          />
 
         </div>
 
       </footer>
-
-      {/* =================================================
-          WAITING ROOM REQUESTS
-      ================================================= */}
 
       {teacher && (
         <MeetingJoinRequests
@@ -3615,10 +2973,6 @@ const LiveMeeting = ({
           }
         />
       )}
-
-      {/* =================================================
-          PERMISSION PANEL
-      ================================================= */}
 
       <MeetingPermissionsPanel
         callId={
@@ -3633,10 +2987,6 @@ const LiveMeeting = ({
           )
         }
       />
-
-      {/* =================================================
-          PARTICIPANTS PANEL
-      ================================================= */}
 
       <MeetingParticipantsPanel
         open={
@@ -3655,10 +3005,6 @@ const LiveMeeting = ({
         }
       />
 
-      {/* =================================================
-          CHAT PANEL
-      ================================================= */}
-
       <MeetingChatPanel
         open={
           chatOpen
@@ -3672,10 +3018,6 @@ const LiveMeeting = ({
           callId
         }
       />
-
-      {/* =================================================
-          ATTENDANCE PANEL
-      ================================================= */}
 
       {teacher && (
         <MeetingAttendancePanel
@@ -3692,10 +3034,6 @@ const LiveMeeting = ({
           }
         />
       )}
-
-      {/* =================================================
-          ACCESSIBILITY PANEL
-      ================================================= */}
 
       <MeetingAccessibilityPanel
         open={
@@ -3726,23 +3064,21 @@ const MeetingLoading = ({
   text,
 }: {
   text: string;
-}) => {
-  return (
-    <main className="flex h-dvh items-center justify-center overflow-hidden bg-[#F9F0E0]">
+}) => (
+  <main className="flex h-dvh items-center justify-center bg-[#F9F0E0]">
 
-      <div className="text-center">
+    <div className="text-center">
 
-        <div className="mx-auto h-11 w-11 animate-spin rounded-full border-4 border-[#CC3A63]/20 border-t-[#CC3A63]" />
+      <div className="mx-auto h-11 w-11 animate-spin rounded-full border-4 border-[#CC3A63]/20 border-t-[#CC3A63]" />
 
-        <p className="mt-5 font-bold text-[#756E64]">
-          {text}
-        </p>
+      <p className="mt-5 font-bold text-[#756E64]">
+        {text}
+      </p>
 
-      </div>
+    </div>
 
-    </main>
-  );
-};
+  </main>
+);
 
 /* =========================================================
    ERROR
@@ -3757,7 +3093,7 @@ const MeetingError = ({
     useRouter();
 
   return (
-    <main className="flex h-dvh items-center justify-center overflow-hidden bg-[#F9F0E0] p-5">
+    <main className="flex h-dvh items-center justify-center bg-[#F9F0E0] p-5">
 
       <div className="max-w-md rounded-[28px] bg-[#FFF7EB] p-8 text-center shadow-lg">
 
