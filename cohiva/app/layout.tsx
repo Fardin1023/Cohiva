@@ -9,16 +9,10 @@ import { ClerkProvider } from "@clerk/nextjs";
 
 import { cn } from "@/lib/utils";
 
-import StreamVideoProvider from "@/components/providers/StreamVideoProvider";
-
 import "./globals.css";
 
 /* =========================================================
    FONTS
-
-   Only the two families Cohiva actually uses are loaded.
-   Removing unused font families reduces font requests and
-   CSS/font payload on every route.
 ========================================================= */
 
 const notoSans =
@@ -47,6 +41,11 @@ export const metadata: Metadata = {
 
 /* =========================================================
    ROOT LAYOUT
+
+   Stream Video is intentionally NOT mounted here anymore.
+   Auth pages therefore do not download/initialize the heavy
+   meeting provider. Protected route groups mount it only where
+   it is actually required.
 ========================================================= */
 
 export default function RootLayout({
@@ -55,7 +54,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
+    <ClerkProvider
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
+      signInFallbackRedirectUrl="/"
+      signUpFallbackRedirectUrl="/"
+    >
       <html
         lang="en"
         suppressHydrationWarning
@@ -70,9 +74,7 @@ export default function RootLayout({
           suppressHydrationWarning
           className="flex min-h-full flex-col"
         >
-          <StreamVideoProvider>
-            {children}
-          </StreamVideoProvider>
+          {children}
         </body>
       </html>
     </ClerkProvider>

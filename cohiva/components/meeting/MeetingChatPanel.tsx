@@ -337,7 +337,10 @@ const MeetingChatPanel = ({
             );
 
           const result =
-            await response.json();
+            (await response.json()) as {
+              error?: string;
+              messages?: unknown[];
+            };
 
           if (
             !response.ok
@@ -354,7 +357,10 @@ const MeetingChatPanel = ({
             )
               ? result.messages
                   .map(
-                    normalizeMessage
+                    (message: unknown) =>
+                      normalizeMessage(
+                        message
+                      )
                   )
                   .filter(
                     (

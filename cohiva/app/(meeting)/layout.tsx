@@ -1,18 +1,28 @@
-import "@stream-io/video-react-sdk/dist/css/styles.css";
-
 import type { ReactNode } from "react";
+import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
+import StreamVideoProvider from "@/components/providers/StreamVideoProvider";
 
-type MeetingLayoutProps = {
-  children: ReactNode;
-};
-
-const MeetingLayout = ({
+const MeetingLayout = async ({
   children,
-}: MeetingLayoutProps) => {
+}: {
+  children: ReactNode;
+}) => {
+  const { isAuthenticated } = await auth();
+
+  /*
+   * Never initialize Stream Video for a signed-out visitor.
+   */
+  if (!isAuthenticated) {
+    redirect("/sign-in");
+  }
+
   return (
-    <div className="min-h-screen w-full bg-[#24211F]">
-      {children}
-    </div>
+    <StreamVideoProvider>
+      <div className="min-h-screen w-full bg-[#24211F]">
+        {children}
+      </div>
+    </StreamVideoProvider>
   );
 };
 

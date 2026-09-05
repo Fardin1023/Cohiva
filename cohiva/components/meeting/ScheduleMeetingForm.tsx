@@ -126,7 +126,7 @@ const ScheduleMeetingForm = ({
       await call.getOrCreate({
         data: {
           starts_at:
-            scheduledAt,
+            scheduledAt.toISOString(),
 
           members: [
             {
