@@ -8,7 +8,6 @@ import {
 
 import {
   CallingState,
-  CancelCallButton,
   ReactionsButton,
   ScreenShareButton,
   SpeakerLayout,
@@ -39,6 +38,7 @@ import {
 } from "react";
 
 import CohivaWhiteboard from "./CohivaWhiteboard";
+import CohivaLeaveCallControl from "./CohivaLeaveCallControl";
 
 import MeetingPermissionsPanel, {
   DEFAULT_COHIVA_PERMISSIONS,
@@ -97,6 +97,10 @@ const MeetingAccessSettings = dynamic(
 
 const MeetingLimitsSettings = dynamic(
   () => import("./MeetingLimitsSettings")
+);
+
+const MeetingDeviceSettings = dynamic(
+  () => import("./MeetingDeviceSettings")
 );
 
 /* =========================================================
@@ -674,6 +678,12 @@ const MeetingLobby = ({
   const [
     copied,
     setCopied,
+  ] =
+    useState(false);
+
+  const [
+    deviceSettingsOpen,
+    setDeviceSettingsOpen,
   ] =
     useState(false);
 
@@ -1298,6 +1308,18 @@ const MeetingLobby = ({
 
             </div>
 
+            <button
+              type="button"
+              onClick={() =>
+                setDeviceSettingsOpen(
+                  true
+                )
+              }
+              className="mt-2 w-full rounded-2xl border border-[#403A35]/10 bg-white px-5 py-2.5 text-xs font-black text-[#3D3732] transition hover:bg-[#F9F0E0] sm:py-3"
+            >
+              🎛 Device settings
+            </button>
+
             {waiting && (
               <div className="mt-4 rounded-2xl bg-[#A2AB73]/10 p-4 text-center">
                 <div className="text-2xl">
@@ -1404,6 +1426,17 @@ const MeetingLobby = ({
         </section>
 
       </div>
+
+      <MeetingDeviceSettings
+        open={
+          deviceSettingsOpen
+        }
+        onClose={() =>
+          setDeviceSettingsOpen(
+            false
+          )
+        }
+      />
 
     </main>
   );
@@ -1544,6 +1577,12 @@ const LiveMeeting = ({
   const [
     accessibilityOpen,
     setAccessibilityOpen,
+  ] =
+    useState(false);
+
+  const [
+    deviceSettingsOpen,
+    setDeviceSettingsOpen,
   ] =
     useState(false);
 
@@ -2422,6 +2461,10 @@ const LiveMeeting = ({
           false
         );
 
+        setDeviceSettingsOpen(
+          false
+        );
+
         setReactionMenuOpen(
           false
         );
@@ -2628,6 +2671,20 @@ const LiveMeeting = ({
           event.preventDefault();
 
           setAccessibilityOpen(
+            (
+              current
+            ) =>
+              !current
+          );
+        }
+
+        if (
+          key ===
+          "d"
+        ) {
+          event.preventDefault();
+
+          setDeviceSettingsOpen(
             (
               current
             ) =>
@@ -2910,6 +2967,20 @@ const LiveMeeting = ({
           <button
             type="button"
             onClick={() =>
+              setDeviceSettingsOpen(
+                true
+              )
+            }
+            title="Device settings"
+            aria-label="Open device settings"
+            className="rounded-lg bg-white/10 px-3 py-2 text-xs"
+          >
+            🎛
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
               setAccessibilityOpen(
                 true
               )
@@ -3058,8 +3129,11 @@ const LiveMeeting = ({
       {/* =================================================
           BOTTOM CALL CONTROLS
 
-          Bottom red button = LEAVE ONLY.
-          It does NOT end class.
+          Student red button = leave meeting.
+
+          Host red button = custom Cohiva popup:
+          - End the call for everyone
+          - Leave the room
       ================================================= */}
 
       <footer className="flex h-[76px] shrink-0 items-center justify-center border-t border-white/10 bg-[#302B27] px-3">
@@ -3076,26 +3150,7 @@ const LiveMeeting = ({
 
           <ScreenShareButton />
 
-          <CancelCallButton
-            onLeave={(
-              leaveError
-            ) => {
-              if (
-                leaveError
-              ) {
-                console.error(
-                  "Leave call error:",
-                  leaveError
-                );
-
-                return;
-              }
-
-              router.replace(
-                "/"
-              );
-            }}
-          />
+          <CohivaLeaveCallControl />
 
         </div>
 
@@ -3185,6 +3240,17 @@ const LiveMeeting = ({
           }
         />
       )}
+
+      <MeetingDeviceSettings
+        open={
+          deviceSettingsOpen
+        }
+        onClose={() =>
+          setDeviceSettingsOpen(
+            false
+          )
+        }
+      />
 
     </main>
   );

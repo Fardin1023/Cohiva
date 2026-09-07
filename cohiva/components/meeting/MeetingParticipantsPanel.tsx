@@ -45,6 +45,11 @@ type ActionType =
   | "share"
   | "remove";
 
+type BulkControl =
+  | "audio"
+  | "video"
+  | "screenshare";
+
 type ModerationNotice = {
   id: string;
 
@@ -160,6 +165,41 @@ const MeetingParticipantsPanel = ({
     setEndingCall,
   ] =
     useState(false);
+
+  /* =====================================================
+     BULK CLASSROOM CONTROLS
+
+     These are temporary mutes, just like Zoom / Meet:
+     students can turn the device back on unless the
+     class-wide permission is disabled separately.
+  ===================================================== */
+
+  const [
+    bulkControl,
+    setBulkControl,
+  ] =
+    useState<
+      BulkControl | null
+    >(null);
+
+  const [
+    bulkBusy,
+    setBulkBusy,
+  ] =
+    useState(false);
+
+  const [
+    bulkNotice,
+    setBulkNotice,
+  ] =
+    useState("");
+
+  const bulkNoticeTimerRef =
+    useRef<
+      ReturnType<
+        typeof setTimeout
+      > | null
+    >(null);
 
   /* =====================================================
      INDIVIDUAL MODERATION NOTICE
@@ -354,6 +394,14 @@ const MeetingParticipantsPanel = ({
       ) {
         clearTimeout(
           noticeTimerRef.current
+        );
+      }
+
+      if (
+        bulkNoticeTimerRef.current
+      ) {
+        clearTimeout(
+          bulkNoticeTimerRef.current
         );
       }
 
@@ -934,6 +982,149 @@ const MeetingParticipantsPanel = ({
     };
 
   /* =====================================================
+     BULK CLASSROOM ACTIONS
+
+     muteOthers() mutes every other participant while
+     keeping the teacher's own track unchanged.
+
+     This is deliberately a temporary mute. Students can
+     enable the track again later. To prevent that, use the
+     class-wide permission controls in Meeting Settings.
+  ===================================================== */
+
+  const bulkControlDetails =
+    (
+      control: BulkControl
+    ) => {
+      if (
+        control ===
+        "audio"
+      ) {
+        return {
+          title:
+            "Mute all microphones?",
+          description:
+            "Everyone else in the room will be muted. Participants can unmute themselves again unless you disable class-wide microphone permission.",
+          button:
+            "Mute all microphones",
+          success:
+            "All participant microphones were muted.",
+          icon:
+            "🔇",
+        };
+      }
+
+      if (
+        control ===
+        "video"
+      ) {
+        return {
+          title:
+            "Turn off all cameras?",
+          description:
+            "Everyone else's camera will be turned off. Participants can turn their camera back on unless you disable class-wide camera permission.",
+          button:
+            "Turn off all cameras",
+          success:
+            "All participant cameras were turned off.",
+          icon:
+            "📷",
+        };
+      }
+
+      return {
+        title:
+          "Stop all screen sharing?",
+        description:
+          "Any participant screen share will be stopped. Participants can share again unless you disable class-wide screen-sharing permission.",
+        button:
+          "Stop all sharing",
+        success:
+          "All participant screen shares were stopped.",
+        icon:
+          "🖥",
+      };
+    };
+
+  const runBulkControl =
+    async () => {
+      if (
+        !call ||
+        !teacher ||
+        !bulkControl ||
+        bulkBusy
+      ) {
+        return;
+      }
+
+      const details =
+        bulkControlDetails(
+          bulkControl
+        );
+
+      try {
+        setBulkBusy(
+          true
+        );
+
+        setError(
+          ""
+        );
+
+        await call.muteOthers(
+          bulkControl
+        );
+
+        setBulkControl(
+          null
+        );
+
+        setBulkNotice(
+          details.success
+        );
+
+        if (
+          bulkNoticeTimerRef.current
+        ) {
+          clearTimeout(
+            bulkNoticeTimerRef.current
+          );
+        }
+
+        bulkNoticeTimerRef.current =
+          setTimeout(
+            () => {
+              setBulkNotice(
+                ""
+              );
+
+              bulkNoticeTimerRef.current =
+                null;
+            },
+            3500
+          );
+      } catch (
+        moderationError
+      ) {
+        console.error(
+          "Bulk classroom control error:",
+          moderationError
+        );
+
+        setError(
+          moderationError instanceof
+            Error
+            ? moderationError.message
+            : "Unable to apply this classroom control."
+        );
+      } finally {
+        setBulkBusy(
+          false
+        );
+      }
+    };
+
+  /* =====================================================
      REMOVE PARTICIPANT
 
      IMPORTANT:
@@ -1080,6 +1271,144 @@ const MeetingParticipantsPanel = ({
 
   return (
     <>
+
+      {/* =================================================
+          BULK CLASSROOM NOTICE
+      ================================================= */}
+
+      {bulkNotice && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed left-1/2 top-[78px] z-[410] w-[360px] max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-[20px] border border-[#A2AB73]/30 bg-[#FFF7EB] p-4 text-[#3D3732] shadow-[0_20px_70px_rgba(0,0,0,0.3)]"
+        >
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#A2AB73]/15 text-lg">
+              ✓
+            </div>
+
+            <p className="text-xs font-black leading-5">
+              {bulkNotice}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================
+          BULK CLASSROOM CONFIRMATION
+      ================================================= */}
+
+      {teacher &&
+        bulkControl && (
+        <div
+          className="fixed inset-0 z-[500] flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
+          onMouseDown={(event) => {
+            if (
+              event.target ===
+              event.currentTarget &&
+              !bulkBusy
+            ) {
+              setBulkControl(
+                null
+              );
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={
+              bulkControlDetails(
+                bulkControl
+              ).title
+            }
+            className="w-full max-w-[430px] rounded-[28px] border border-[#403A35]/10 bg-[#FFF7EB] p-5 text-[#3D3732] shadow-[0_30px_100px_rgba(0,0,0,0.4)]"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#CC3A63]/10 text-xl">
+                  {
+                    bulkControlDetails(
+                      bulkControl
+                    ).icon
+                  }
+                </div>
+
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-[0.16em] text-[#CC3A63]">
+                    Classroom control
+                  </p>
+
+                  <h3 className="mt-1 text-lg font-black">
+                    {
+                      bulkControlDetails(
+                        bulkControl
+                      ).title
+                    }
+                  </h3>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={
+                  bulkBusy
+                }
+                onClick={() =>
+                  setBulkControl(
+                    null
+                  )
+                }
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F9F0E0] text-lg font-black disabled:opacity-50"
+              >
+                ×
+              </button>
+            </div>
+
+            <p className="mt-4 text-sm leading-6 text-[#756E64]">
+              {
+                bulkControlDetails(
+                  bulkControl
+                ).description
+              }
+            </p>
+
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={
+                  bulkBusy
+                }
+                onClick={() =>
+                  setBulkControl(
+                    null
+                  )
+                }
+                className="rounded-2xl border border-[#403A35]/10 bg-white px-4 py-3 text-xs font-black text-[#3D3732] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={
+                  bulkBusy
+                }
+                onClick={() =>
+                  void runBulkControl()
+                }
+                className="rounded-2xl bg-[#CC3A63] px-4 py-3 text-xs font-black text-white transition hover:bg-[#B83259] disabled:cursor-wait disabled:opacity-60"
+              >
+                {bulkBusy
+                  ? "Applying..."
+                  : bulkControlDetails(
+                      bulkControl
+                    ).button}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* =================================================
           INDIVIDUAL MODERATION POPUP
@@ -1729,10 +2058,61 @@ const MeetingParticipantsPanel = ({
 
               <div className="mb-2 rounded-xl bg-[#F9F0E0] px-3 py-2">
 
-                <p className="text-[9px] leading-4 text-[#756E64]">
-                  Disable audio, video, or screen sharing to prevent that participant from using the feature. The Allow option appears only after you disable that permission.
+                <p className="text-[9px] font-black uppercase tracking-[0.13em] text-[#756E64]">
+                  Quick classroom controls
                 </p>
 
+                <p className="mt-1 text-[9px] leading-4 text-[#756E64]">
+                  These temporarily mute participants. Use Meeting Settings when you want to completely prevent students from turning a device back on.
+                </p>
+
+              </div>
+
+              <div className="mb-2 grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  disabled={
+                    bulkBusy
+                  }
+                  onClick={() =>
+                    setBulkControl(
+                      "audio"
+                    )
+                  }
+                  className="rounded-xl bg-[#403A35]/10 px-2 py-2.5 text-[9px] font-black text-[#3D3732] transition hover:bg-[#CC3A63]/10 hover:text-[#CC3A63] disabled:opacity-50"
+                >
+                  🔇 Mute all
+                </button>
+
+                <button
+                  type="button"
+                  disabled={
+                    bulkBusy
+                  }
+                  onClick={() =>
+                    setBulkControl(
+                      "video"
+                    )
+                  }
+                  className="rounded-xl bg-[#403A35]/10 px-2 py-2.5 text-[9px] font-black text-[#3D3732] transition hover:bg-[#CC3A63]/10 hover:text-[#CC3A63] disabled:opacity-50"
+                >
+                  📷 Cameras off
+                </button>
+
+                <button
+                  type="button"
+                  disabled={
+                    bulkBusy
+                  }
+                  onClick={() =>
+                    setBulkControl(
+                      "screenshare"
+                    )
+                  }
+                  className="rounded-xl bg-[#403A35]/10 px-2 py-2.5 text-[9px] font-black text-[#3D3732] transition hover:bg-[#CC3A63]/10 hover:text-[#CC3A63] disabled:opacity-50"
+                >
+                  🖥 Stop shares
+                </button>
               </div>
 
               <button
