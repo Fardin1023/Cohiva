@@ -47,6 +47,20 @@ const tokenCache =
 const TOKEN_CACHE_MS =
   50 * 60 * 1000;
 
+const TOKEN_FETCH_ATTEMPTS =
+  3;
+
+const wait =
+  (milliseconds: number) =>
+    new Promise<void>(
+      (resolve) => {
+        window.setTimeout(
+          resolve,
+          milliseconds
+        );
+      }
+    );
+
 const getStreamToken =
   async (
     userId: string
@@ -64,40 +78,113 @@ const getStreamToken =
       return cached.token;
     }
 
-    const response =
-      await fetch(
-        "/api/stream-token",
-        {
-          cache: "no-store",
+    let lastError:
+      unknown;
+
+    for (
+      let attempt = 1;
+      attempt <=
+        TOKEN_FETCH_ATTEMPTS;
+      attempt += 1
+    ) {
+      try {
+        const response =
+          await fetch(
+            "/api/stream-token",
+            {
+              cache: "no-store",
+            }
+          );
+
+        if (!response.ok) {
+          const retryable =
+            response.status ===
+              429 ||
+            response.status >=
+              500;
+
+          const error =
+            new Error(
+              `Unable to get Stream token: ${response.status}`
+            );
+
+          if (
+            !retryable ||
+            attempt ===
+              TOKEN_FETCH_ATTEMPTS
+          ) {
+            throw error;
+          }
+
+          lastError =
+            error;
+        } else {
+          const data =
+            await response.json();
+
+          if (!data.token) {
+            throw new Error(
+              "Stream token was not returned."
+            );
+          }
+
+          tokenCache.set(
+            userId,
+            {
+              token: data.token,
+              expiresAt:
+                Date.now() +
+                TOKEN_CACHE_MS,
+            }
+          );
+
+          return data.token;
         }
-      );
+      } catch (error) {
+        lastError =
+          error;
 
-    if (!response.ok) {
-      throw new Error(
-        `Unable to get Stream token: ${response.status}`
-      );
-    }
+        const status =
+          error instanceof Error
+            ? error.message.match(
+                /token: (\d+)$/
+              )?.[1]
+            : undefined;
 
-    const data =
-      await response.json();
+        const statusCode =
+          status
+            ? Number(status)
+            : undefined;
 
-    if (!data.token) {
-      throw new Error(
-        "Stream token was not returned."
-      );
-    }
+        const nonRetryableHttpError =
+          statusCode !==
+            undefined &&
+          statusCode !==
+            429 &&
+          statusCode <
+            500;
 
-    tokenCache.set(
-      userId,
-      {
-        token: data.token,
-        expiresAt:
-          Date.now() +
-          TOKEN_CACHE_MS,
+        if (
+          nonRetryableHttpError ||
+          attempt ===
+            TOKEN_FETCH_ATTEMPTS
+        ) {
+          throw error;
+        }
       }
-    );
 
-    return data.token;
+      await wait(
+        400 * attempt
+      );
+    }
+
+    throw (
+      lastError instanceof Error
+        ? lastError
+        : new Error(
+            "Unable to get Stream token."
+          )
+    );
   };
 
 /* =========================================================

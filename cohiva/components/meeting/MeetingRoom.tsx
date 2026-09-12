@@ -39,6 +39,7 @@ import {
 
 import CohivaWhiteboard from "./CohivaWhiteboard";
 import CohivaLeaveCallControl from "./CohivaLeaveCallControl";
+import MeetingConnectionStatus from "./MeetingConnectionStatus";
 
 import MeetingPermissionsPanel, {
   DEFAULT_COHIVA_PERMISSIONS,
@@ -539,6 +540,8 @@ const MeetingRoom = ({
     >
       <StreamTheme className="cohiva-stream-theme">
 
+        <MeetingConnectionStatus />
+
         <MeetingExperience
           callId={
             callId
@@ -569,9 +572,53 @@ const MeetingExperience = ({
   const callingState =
     useCallCallingState();
 
+  const [
+    hasJoinedThisSession,
+    setHasJoinedThisSession,
+  ] =
+    useState(false);
+
+  /*
+   * Stream automatically reconnects after temporary network
+   * interruptions. Once this user has joined, keep the live
+   * meeting mounted through OFFLINE / RECONNECTING / JOINING
+   * / MIGRATING states so local Cohiva UI state is not lost
+   * and the user is not incorrectly sent back to the lobby.
+   */
+  useEffect(() => {
+    if (
+      callingState ===
+      CallingState.JOINED
+    ) {
+      setHasJoinedThisSession(
+        true
+      );
+    }
+  }, [callingState]);
+
+  const preservingLiveMeeting =
+    (
+      hasJoinedThisSession ||
+      callingState ===
+        CallingState.JOINED
+    ) &&
+    (
+      callingState ===
+        CallingState.JOINED ||
+      callingState ===
+        CallingState.JOINING ||
+      callingState ===
+        CallingState.RECONNECTING ||
+      callingState ===
+        CallingState.RECONNECTING_FAILED ||
+      callingState ===
+        CallingState.MIGRATING ||
+      callingState ===
+        CallingState.OFFLINE
+    );
+
   if (
-    callingState ===
-    CallingState.JOINED
+    preservingLiveMeeting
   ) {
     return (
       <LiveMeeting

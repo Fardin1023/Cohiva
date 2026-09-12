@@ -14,7 +14,9 @@ import type {
 } from "@excalidraw/excalidraw/element/types";
 
 import {
+  CallingState,
   useCall,
+  useCallStateHooks,
 } from "@stream-io/video-react-sdk";
 
 import type {
@@ -224,6 +226,14 @@ const WhiteboardCanvas = ({
   const call =
     useCall();
 
+  const {
+    useCallCallingState,
+  } =
+    useCallStateHooks();
+
+  const callingState =
+    useCallCallingState();
+
   const isTeacher =
     Boolean(
       call?.isCreatedByMe
@@ -296,6 +306,9 @@ const WhiteboardCanvas = ({
     );
 
   const applyingRemoteRef =
+    useRef(false);
+
+  const connectionInterruptedRef =
     useRef(false);
 
   const lastSentVersionsRef =
@@ -1746,6 +1759,132 @@ const WhiteboardCanvas = ({
     isTeacher,
     initialBoardLoaded,
     relayWhiteboardEvents,
+  ]);
+
+  /* =====================================================
+     RECONNECT RECOVERY
+
+     Keep whiteboard state safe across temporary network
+     interruptions. Students fail closed while disconnected
+     and request a fresh teacher snapshot after Stream joins
+     again. Teachers preserve their local scene and publish a
+     fresh full snapshot after recovery.
+  ===================================================== */
+
+  useEffect(() => {
+    const interrupted =
+      callingState ===
+        CallingState.OFFLINE ||
+      callingState ===
+        CallingState.RECONNECTING ||
+      callingState ===
+        CallingState.RECONNECTING_FAILED ||
+      callingState ===
+        CallingState.MIGRATING;
+
+    if (interrupted) {
+      connectionInterruptedRef.current =
+        true;
+
+      if (
+        active &&
+        !isTeacher
+      ) {
+        hardLockStudent();
+      }
+
+      return;
+    }
+
+    if (
+      callingState !==
+        CallingState.JOINED ||
+      !connectionInterruptedRef.current ||
+      !active ||
+      !call
+    ) {
+      return;
+    }
+
+    connectionInterruptedRef.current =
+      false;
+
+    void refreshWhiteboardPermission(
+      !isTeacher
+    );
+
+    if (isTeacher) {
+      void sendFullSnapshot().catch(
+        (snapshotError) => {
+          console.error(
+            "Whiteboard reconnect snapshot error:",
+            snapshotError
+          );
+        }
+      );
+
+      schedulePersist();
+
+      return;
+    }
+
+    setSyncing(
+      true
+    );
+
+    setSyncError(
+      ""
+    );
+
+    if (
+      syncTimeoutRef.current
+    ) {
+      clearTimeout(
+        syncTimeoutRef.current
+      );
+    }
+
+    void relayWhiteboardEvents([
+      {
+        action:
+          "sync-request",
+      },
+    ]).catch(
+      (syncRequestError) => {
+        console.error(
+          "Whiteboard reconnect sync error:",
+          syncRequestError
+        );
+
+        setSyncing(
+          false
+        );
+
+        setSyncError(
+          "Unable to resync the board after reconnecting."
+        );
+      }
+    );
+
+    syncTimeoutRef.current =
+      setTimeout(
+        () => {
+          setSyncing(
+            false
+          );
+        },
+        5000
+      );
+  }, [
+    active,
+    call,
+    callingState,
+    hardLockStudent,
+    isTeacher,
+    refreshWhiteboardPermission,
+    relayWhiteboardEvents,
+    schedulePersist,
+    sendFullSnapshot,
   ]);
 
   /* =====================================================
