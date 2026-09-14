@@ -4,7 +4,7 @@ import type {
 
 import {
   auth,
-} from "@clerk/nextjs/server";
+} from "@/lib/auth/server";
 
 import {
   redirect,

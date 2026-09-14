@@ -5,7 +5,7 @@ import {
   COHIVA_DEFAULT_PARTICIPANTS,
 } from "@/lib/cohivaMeetingConfig";
 
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "@/components/providers/AuthProvider";
 
 import {
   useRouter,
@@ -61,7 +61,7 @@ const PersonalRoom = () => {
       }
 
       /*
-       * Every Clerk user receives
+       * Every Cohiva user receives
        * one permanent Cohiva room.
        *
        * Example:

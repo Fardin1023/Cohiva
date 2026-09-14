@@ -4,7 +4,7 @@ import {
 
 import {
   auth,
-} from "@clerk/nextjs/server";
+} from "@/lib/auth/server";
 
 import {
   COHIVA_CALL_TYPE,

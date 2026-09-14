@@ -1,13 +1,12 @@
-import { Show, UserButton } from "@clerk/nextjs";
 import Image from "next/image";
 import Link from "next/link";
 
+import UserMenu from "@/components/auth/UserMenu";
 import MobileNav from "./MobileNav";
 
 const Navbar = () => {
   return (
     <nav className="fixed left-0 top-0 z-50 flex h-[84px] w-full items-center justify-between bg-[#B9687C] px-5 sm:px-6">
-      {/* Left - Logo + Brand */}
       <Link href="/" className="flex items-center gap-3">
         <Image
           src="/images/CohivaLogo.webp"
@@ -23,20 +22,9 @@ const Navbar = () => {
         </h1>
       </Link>
 
-      {/* Right */}
       <div className="flex items-center gap-3">
-        {/* User profile */}
-        <Show when="signed-in">
-          <UserButton
-            appearance={{
-              elements: {
-                avatarBox: "h-10 w-10",
-              },
-            }}
-          />
-        </Show>
+        <UserMenu />
 
-        {/* MOBILE ONLY */}
         <div className="md:hidden">
           <MobileNav />
         </div>

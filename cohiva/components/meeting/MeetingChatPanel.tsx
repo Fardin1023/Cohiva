@@ -8,7 +8,7 @@ import {
 
 import {
   useUser,
-} from "@clerk/nextjs";
+} from "@/components/providers/AuthProvider";
 
 import {
   useCallback,

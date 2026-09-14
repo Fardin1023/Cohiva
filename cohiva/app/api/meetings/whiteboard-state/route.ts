@@ -1,6 +1,6 @@
 import {
   auth,
-} from "@clerk/nextjs/server";
+} from "@/lib/auth/server";
 
 import connectMongoDB from "@/lib/mongodb";
 

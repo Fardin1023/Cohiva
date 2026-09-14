@@ -1,6 +1,4 @@
-import { SignUp } from "@clerk/nextjs";
-import { authAppearance } from "@/lib/clerkAppearance";
-import AuthFormFallback from "@/components/auth/AuthFormFallback";
+import CohivaSignUpForm from "@/components/auth/CohivaSignUpForm";
 
 const SignUpPage = () => {
   return (
@@ -19,15 +17,7 @@ const SignUpPage = () => {
         </p>
       </div>
 
-      <SignUp
-        appearance={authAppearance}
-        fallback={<AuthFormFallback />}
-        routing="path"
-        path="/sign-up"
-        signInUrl="/sign-in"
-        fallbackRedirectUrl="/"
-        signInFallbackRedirectUrl="/"
-      />
+      <CohivaSignUpForm />
     </div>
   );
 };

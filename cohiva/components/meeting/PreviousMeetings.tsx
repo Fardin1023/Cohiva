@@ -7,7 +7,7 @@ import {
   useStreamVideoClient,
 } from "@stream-io/video-react-sdk";
 
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "@/components/providers/AuthProvider";
 import { useRouter } from "next/navigation";
 
 import {

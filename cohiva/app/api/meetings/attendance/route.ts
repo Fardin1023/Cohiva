@@ -1,6 +1,6 @@
 import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
 
-import { auth } from "@clerk/nextjs/server";
+import { auth } from "@/lib/auth/server";
 import { NextRequest, NextResponse } from "next/server";
 import { getStreamServerClient } from "@/lib/streamServer";
 

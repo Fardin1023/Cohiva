@@ -5,15 +5,11 @@ import {
   Noto_Sans,
 } from "next/font/google";
 
-import { ClerkProvider } from "@clerk/nextjs";
-
+import { AuthProvider } from "@/components/providers/AuthProvider";
+import { currentUser } from "@/lib/auth/server";
 import { cn } from "@/lib/utils";
 
 import "./globals.css";
-
-/* =========================================================
-   FONTS
-========================================================= */
 
 const notoSans =
   Noto_Sans({
@@ -29,54 +25,41 @@ const geistMono =
     display: "swap",
   });
 
-/* =========================================================
-   METADATA
-========================================================= */
-
 export const metadata: Metadata = {
   title: "Cohiva",
   description:
     "Meet, connect, and collaborate with Cohiva.",
 };
 
-/* =========================================================
-   ROOT LAYOUT
-
-   Stream Video is intentionally NOT mounted here anymore.
-   Auth pages therefore do not download/initialize the heavy
-   meeting provider. Protected route groups mount it only where
-   it is actually required.
-========================================================= */
-
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const user =
+    await currentUser();
+
   return (
-    <ClerkProvider
-      signInUrl="/sign-in"
-      signUpUrl="/sign-up"
-      signInFallbackRedirectUrl="/"
-      signUpFallbackRedirectUrl="/"
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={cn(
+        "h-full antialiased",
+        notoSans.variable,
+        geistMono.variable,
+        "font-sans"
+      )}
     >
-      <html
-        lang="en"
+      <body
         suppressHydrationWarning
-        className={cn(
-          "h-full antialiased",
-          notoSans.variable,
-          geistMono.variable,
-          "font-sans"
-        )}
+        className="flex min-h-full flex-col"
       >
-        <body
-          suppressHydrationWarning
-          className="flex min-h-full flex-col"
+        <AuthProvider
+          initialUser={user}
         >
           {children}
-        </body>
-      </html>
-    </ClerkProvider>
+        </AuthProvider>
+      </body>
+    </html>
   );
 }

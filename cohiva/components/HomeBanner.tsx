@@ -1,6 +1,6 @@
 "use client";
 
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "@/components/providers/AuthProvider";
 import Image from "next/image";
 import { useEffect, useState } from "react";
 
@@ -18,7 +18,7 @@ const HomeBanner = () => {
     return () => clearInterval(timer);
   }, []);
 
-  // User name from Clerk
+  // User name from Cohiva auth
   const userName =
     user?.firstName ||
     user?.fullName ||

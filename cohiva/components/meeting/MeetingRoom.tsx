@@ -25,7 +25,7 @@ import {
   type StreamVideoEvent,
 } from "@stream-io/video-react-sdk";
 
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "@/components/providers/AuthProvider";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 

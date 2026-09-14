@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { auth } from "@clerk/nextjs/server";
+import { auth } from "@/lib/auth/server";
 import { redirect } from "next/navigation";
 import StreamVideoProvider from "@/components/providers/StreamVideoProvider";
 

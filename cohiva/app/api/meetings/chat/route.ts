@@ -2,7 +2,7 @@ import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
 
 import {
   auth,
-} from "@clerk/nextjs/server";
+} from "@/lib/auth/server";
 
 import { getStreamServerClient } from "@/lib/streamServer";
 
@@ -329,7 +329,7 @@ export async function POST(
           /*
            * IMPORTANT:
            *
-           * senderId comes from Clerk,
+           * senderId comes from Cohiva auth,
            * never from the browser.
            */
           senderId:

@@ -1,6 +1,6 @@
 "use client";
 
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "@/components/providers/AuthProvider";
 
 import {
   StreamVideo,
@@ -541,7 +541,7 @@ const StreamVideoProvider = ({
    * Only user.id controls Stream
    * client creation now.
    *
-   * Changes to Clerk avatar/name
+   * Changes to Cohiva avatar/name
    * will NOT recreate the Stream
    * connection and kick the user
    * out of a meeting.
