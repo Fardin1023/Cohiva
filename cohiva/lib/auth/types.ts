@@ -6,6 +6,7 @@ export type CohivaUser = {
   fullName: string | null;
   username: string | null;
   imageUrl: string;
+  avatarIcon: string;
 };
 
 export type CohivaAuthState = {

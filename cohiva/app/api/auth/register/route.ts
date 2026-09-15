@@ -153,6 +153,7 @@ export async function POST(
         lastName,
         username,
         imageUrl: "",
+        avatarIcon: "",
         passwordHash,
       });
 

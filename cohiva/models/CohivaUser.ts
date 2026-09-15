@@ -9,6 +9,7 @@ export type CohivaUserDocument = {
   lastName: string;
   username: string;
   imageUrl: string;
+  avatarIcon: string;
   passwordHash: string;
   createdAt: Date;
   updatedAt: Date;
@@ -51,7 +52,14 @@ const CohivaUserSchema =
         type: String,
         default: "",
         trim: true,
-        maxlength: 1000,
+        maxlength: 400_000,
+      },
+
+      avatarIcon: {
+        type: String,
+        default: "",
+        trim: true,
+        maxlength: 32,
       },
 
       passwordHash: {

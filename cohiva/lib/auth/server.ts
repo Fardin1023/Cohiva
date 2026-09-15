@@ -40,6 +40,7 @@ export const currentUser =
           lastName: 1,
           username: 1,
           imageUrl: 1,
+          avatarIcon: 1,
         })
         .lean();
 
@@ -57,6 +58,7 @@ export const currentUser =
         lastName?: string;
         username?: string;
         imageUrl?: string;
+        avatarIcon?: string;
       };
 
     const firstName =
@@ -87,6 +89,9 @@ export const currentUser =
         null,
       imageUrl:
         user.imageUrl?.trim() ||
+        "",
+      avatarIcon:
+        user.avatarIcon?.trim() ||
         "",
     };
   };
