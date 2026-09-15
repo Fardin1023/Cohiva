@@ -7,6 +7,7 @@ export type RtcTokenPayload = {
   userId: string;
   name: string;
   image: string;
+  avatarIcon?: string;
   role: RtcRole;
   exp: number;
   maxParticipants: number;

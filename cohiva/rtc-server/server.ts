@@ -138,6 +138,7 @@ const participantShape = (peer: Peer) => ({
   userId: peer.token.userId,
   name: peer.token.name,
   image: peer.token.image,
+  avatarIcon: peer.token.avatarIcon ?? "",
   isHost: peer.token.role === "host",
 });
 
@@ -741,6 +742,60 @@ const handleRequest = async (
     };
   }
 
+  if (action === "setLimits") {
+    if (peer.token.role !== "host") {
+      throw new Error("Only the host can change meeting limits.");
+    }
+
+    const nextMaxParticipants = Math.max(
+      2,
+      Math.min(20, Number(data.maxParticipants) || room.maxParticipants)
+    );
+
+    const nextDurationMinutes = Math.max(
+      1,
+      Math.min(45, Number(data.durationMinutes) || room.durationMinutes)
+    );
+
+    const currentParticipantCount = Array.from(room.peers.values()).filter(
+      (item) => item.joined
+    ).length;
+
+    if (nextMaxParticipants < currentParticipantCount) {
+      throw new Error(
+        `The participant limit cannot be lower than the ${currentParticipantCount} people currently in the meeting.`
+      );
+    }
+
+    room.maxParticipants = nextMaxParticipants;
+    room.durationMinutes = nextDurationMinutes;
+
+    if (room.startedAt) {
+      room.timerEndsAt = new Date(
+        room.startedAt.getTime() + nextDurationMinutes * 60_000
+      );
+
+      if (room.durationTimer) {
+        clearTimeout(room.durationTimer);
+      }
+
+      room.durationTimer = setTimeout(
+        () => endRoom(room),
+        Math.max(1_000, room.timerEndsAt.getTime() - Date.now())
+      );
+    }
+
+    const update = {
+      durationMinutes: room.durationMinutes,
+      maxParticipants: room.maxParticipants,
+      timerEndsAt: room.timerEndsAt?.toISOString() ?? null,
+    };
+
+    broadcast(room, "cohiva.limits-updated", update);
+
+    return { success: true, ...update };
+  }
+
   if (action === "endMeeting") {
     if (peer.token.role !== "host") {
       throw new Error("Only the host can end the meeting.");
@@ -764,32 +819,57 @@ const handleRequest = async (
   throw new Error(`Unknown RTC action: ${action}`);
 };
 
-const handleSocket = async (ws: WebSocket, token: RtcTokenPayload) => {
-  const room = await getOrCreateRoom(token);
+const handleSocket = (ws: WebSocket, token: RtcTokenPayload) => {
+  /*
+   * Important: attach the WebSocket message listener immediately.
+   *
+   * A brand-new room has to create its mediasoup Router first. That is
+   * asynchronous and can take long enough for the browser's WebSocket
+   * "open" event to fire and send the initial `join` request. Previously
+   * the message listener was attached only after createRouter() finished,
+   * so the very first join request for a new room could be lost and the
+   * client would wait until its request timeout. A refresh then worked
+   * because the room/router already existed.
+   *
+   * `setupPromise` lets requests arrive immediately and wait for room/peer
+   * initialization instead of being dropped.
+   */
+  let closed = false;
 
-  if (room.emptyTimer) {
-    clearTimeout(room.emptyTimer);
-    room.emptyTimer = null;
-  }
+  const setupPromise = (async () => {
+    const room = await getOrCreateRoom(token);
 
-  const old = room.peers.get(token.userId);
-  if (old && old.ws !== ws) {
-    try {
-      old.ws.close(4002, "Reconnected elsewhere");
-    } catch {}
-    removePeer(room, old);
-  }
+    if (room.emptyTimer) {
+      clearTimeout(room.emptyTimer);
+      room.emptyTimer = null;
+    }
 
-  const peer: Peer = {
-    ws,
-    token,
-    joined: false,
-    transports: new Map(),
-    producers: new Map(),
-    consumers: new Map(),
-  };
+    const old = room.peers.get(token.userId);
+    if (old && old.ws !== ws) {
+      try {
+        old.ws.close(4002, "Reconnected elsewhere");
+      } catch {}
+      removePeer(room, old);
+    }
 
-  room.peers.set(token.userId, peer);
+    const peer: Peer = {
+      ws,
+      token,
+      joined: false,
+      transports: new Map(),
+      producers: new Map(),
+      consumers: new Map(),
+    };
+
+    room.peers.set(token.userId, peer);
+
+    // The socket may have closed while the mediasoup room was being created.
+    if (closed) {
+      removePeer(room, peer);
+    }
+
+    return { room, peer };
+  })();
 
   ws.on("message", async (raw) => {
     let message: JsonObject;
@@ -804,6 +884,12 @@ const handleSocket = async (ws: WebSocket, token: RtcTokenPayload) => {
     }
 
     try {
+      const { room, peer } = await setupPromise;
+
+      if (closed || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
       const data = await handleRequest(
         room,
         peer,
@@ -827,8 +913,24 @@ const handleSocket = async (ws: WebSocket, token: RtcTokenPayload) => {
     }
   });
 
-  ws.on("close", () => removePeer(room, peer));
-  ws.on("error", () => removePeer(room, peer));
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+
+    void setupPromise
+      .then(({ room, peer }) => removePeer(room, peer))
+      .catch(() => {});
+  };
+
+  ws.on("close", cleanup);
+  ws.on("error", cleanup);
+
+  void setupPromise.catch((error) => {
+    console.error("RTC socket setup error:", error);
+    try {
+      ws.close(1011, "RTC setup failed");
+    } catch {}
+  });
 };
 
 const server = http.createServer(async (req, res) => {
@@ -920,12 +1022,7 @@ server.on("upgrade", (req, socket, head) => {
   try {
     const token = verifyRtcToken(tokenValue, SECRET);
     wss.handleUpgrade(req, socket, head, (ws) => {
-      void handleSocket(ws, token).catch((error) => {
-        console.error("RTC socket setup error:", error);
-        try {
-          ws.close(1011, "RTC setup failed");
-        } catch {}
-      });
+      handleSocket(ws, token);
     });
   } catch (error) {
     console.error("RTC token rejected:", error);

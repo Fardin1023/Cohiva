@@ -19,6 +19,10 @@ import {
 
 import MeetingLimitFields from "./MeetingLimitFields";
 
+import {
+  useOptionalCohivaRtc,
+} from "@/components/rtc/CohivaRtcProvider";
+
 type MeetingLimitsSettingsProps = {
   callId: string;
   compact?: boolean;
@@ -29,6 +33,8 @@ const MeetingLimitsSettings = ({
   compact = false,
 }: MeetingLimitsSettingsProps) => {
   const call = useCall();
+
+  const rtc = useOptionalCohivaRtc();
 
   const {
     useCallSettings,
@@ -163,6 +169,11 @@ const MeetingLimitsSettings = ({
        * even on a slow websocket connection.
        */
       await call.get();
+
+      await rtc?.updateLimits(
+        durationMinutes,
+        maxParticipants
+      );
 
       setSaved(true);
 

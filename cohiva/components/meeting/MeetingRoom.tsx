@@ -9,13 +9,8 @@ import {
 import {
   CallingState,
   ReactionsButton,
-  ScreenShareButton,
-  SpeakerLayout,
-  SpeakingWhileMutedNotification,
   StreamCall,
   StreamTheme,
-  ToggleAudioPublishingButton,
-  ToggleVideoPublishingButton,
   VideoPreview,
   useCall,
   useCallStateHooks,
@@ -26,6 +21,13 @@ import {
 } from "@stream-io/video-react-sdk";
 
 import { useUser } from "@/components/providers/AuthProvider";
+import {
+  CohivaRtcProvider,
+  useCohivaRtc,
+} from "@/components/rtc/CohivaRtcProvider";
+import CohivaRtcStage from "@/components/rtc/CohivaRtcStage";
+import CohivaRtcControls from "@/components/rtc/CohivaRtcControls";
+import CohivaRtcDeviceSettings from "@/components/rtc/CohivaRtcDeviceSettings";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
@@ -53,17 +55,6 @@ import MeetingSessionTimer from "./MeetingSessionTimer";
 import type {
   AccessibilitySettings,
 } from "./meetingAccessibilityTypes";
-
-import {
-  CohivaParticipantBarUI,
-  CohivaParticipantSpotlightUI,
-} from "./CohivaParticipantViewUI";
-
-import {
-  CohivaRecordingControl,
-  CohivaRecordingEvents,
-  CohivaRecordingIndicator,
-} from "./CohivaRecordingControl";
 
 /* =========================================================
    LAZY MEETING PANELS
@@ -621,11 +612,17 @@ const MeetingExperience = ({
     preservingLiveMeeting
   ) {
     return (
-      <LiveMeeting
+      <CohivaRtcProvider
         callId={
           callId
         }
-      />
+      >
+        <LiveMeeting
+          callId={
+            callId
+          }
+        />
+      </CohivaRtcProvider>
     );
   }
 
@@ -661,6 +658,7 @@ const MeetingLobby = ({
   const {
     useCameraState,
     useMicrophoneState,
+    useSpeakerState,
     useCallCallingState,
     useCallCustomData,
     useParticipantCount,
@@ -672,6 +670,8 @@ const MeetingLobby = ({
     camera,
     isMute:
       cameraOff,
+    selectedDevice:
+      selectedCameraDevice,
   } =
     useCameraState();
 
@@ -679,8 +679,16 @@ const MeetingLobby = ({
     microphone,
     isMute:
       microphoneOff,
+    selectedDevice:
+      selectedMicrophoneDevice,
   } =
     useMicrophoneState();
+
+  const {
+    selectedDevice:
+      selectedSpeakerDevice,
+  } =
+    useSpeakerState();
 
   const callingState =
     useCallCallingState();
@@ -733,6 +741,33 @@ const MeetingLobby = ({
     setDeviceSettingsOpen,
   ] =
     useState(false);
+
+  const [
+    mediaApiAvailable,
+    setMediaApiAvailable,
+  ] =
+    useState(true);
+
+  useEffect(() => {
+    const supported =
+      typeof window !== "undefined" &&
+      window.isSecureContext &&
+      typeof navigator !== "undefined" &&
+      Boolean(
+        navigator.mediaDevices?.getUserMedia
+      );
+
+    setMediaApiAvailable(
+      supported
+    );
+
+    if (!supported) {
+      void Promise.allSettled([
+        camera.disable(),
+        microphone.disable(),
+      ]);
+    }
+  }, [camera, microphone]);
 
   const [
     accessStatus,
@@ -806,6 +841,38 @@ const MeetingLobby = ({
             "approved"
           );
 
+          /*
+           * Phase 6A:
+           * Stream remains connected only as Cohiva's temporary
+           * chat/whiteboard/attendance side-channel. Preserve the
+           * lobby media choices for Cohiva RTC, then make sure no
+           * camera or microphone is published to Stream.
+           */
+          try {
+            window.sessionStorage.setItem(
+              `cohiva-rtc-prejoin:${callId}`,
+              JSON.stringify({
+                microphone:
+                  mediaApiAvailable &&
+                  !microphoneOff,
+                camera:
+                  mediaApiAvailable &&
+                  !cameraOff,
+                audioDeviceId:
+                  selectedMicrophoneDevice || "",
+                videoDeviceId:
+                  selectedCameraDevice || "",
+                audioOutputDeviceId:
+                  selectedSpeakerDevice || "",
+              })
+            );
+          } catch {}
+
+          await Promise.allSettled([
+            camera.disable(),
+            microphone.disable(),
+          ]);
+
           await call.join();
         } catch (
           joinError
@@ -848,6 +915,15 @@ const MeetingLobby = ({
       [
         call,
         callingState,
+        callId,
+        camera,
+        cameraOff,
+        microphone,
+        microphoneOff,
+        selectedCameraDevice,
+        selectedMicrophoneDevice,
+        selectedSpeakerDevice,
+        mediaApiAvailable,
       ]
     );
 
@@ -1005,6 +1081,13 @@ const MeetingLobby = ({
 
   const toggleCamera =
     async () => {
+      if (!mediaApiAvailable) {
+        setError(
+          "Camera and microphone access requires a secure browser context. For LAN testing, mark this development origin as secure or use HTTPS."
+        );
+        return;
+      }
+
       try {
         setError("");
 
@@ -1024,6 +1107,13 @@ const MeetingLobby = ({
 
   const toggleMicrophone =
     async () => {
+      if (!mediaApiAvailable) {
+        setError(
+          "Camera and microphone access requires a secure browser context. For LAN testing, mark this development origin as secure or use HTTPS."
+        );
+        return;
+      }
+
       try {
         setError("");
 
@@ -1229,11 +1319,13 @@ const MeetingLobby = ({
             Cohiva Preview
           </div>
 
-          <div className="cohiva-preview-video absolute inset-0">
-            <VideoPreview />
-          </div>
+          {mediaApiAvailable && !cameraOff && (
+            <div className="cohiva-preview-video absolute inset-0">
+              <VideoPreview />
+            </div>
+          )}
 
-          {cameraOff && (
+          {(!mediaApiAvailable || cameraOff) && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#302B27]">
 
               <div className="text-center">
@@ -1243,8 +1335,16 @@ const MeetingLobby = ({
                 </div>
 
                 <p className="mt-2 text-base font-black text-white sm:mt-4 sm:text-xl">
-                  Camera is off
+                  {mediaApiAvailable
+                    ? "Camera is off"
+                    : "Camera preview unavailable"}
                 </p>
+
+                {!mediaApiAvailable && (
+                  <p className="mx-auto mt-2 max-w-sm px-4 text-xs font-semibold leading-5 text-white/70">
+                    This LAN page is using an insecure HTTP origin. Allow this development origin as secure or use HTTPS to enable camera and microphone access.
+                  </p>
+                )}
 
               </div>
 
@@ -1322,7 +1422,8 @@ const MeetingLobby = ({
                 onClick={() =>
                   void toggleCamera()
                 }
-                className="rounded-2xl bg-[#F9F0E0] p-3 text-xs font-bold text-[#3D3732] sm:p-4 sm:text-sm"
+                disabled={!mediaApiAvailable}
+                className="rounded-2xl bg-[#F9F0E0] p-3 text-xs font-bold text-[#3D3732] disabled:cursor-not-allowed disabled:opacity-50 sm:p-4 sm:text-sm"
               >
                 <span className="mb-1 block text-xl">
                   {cameraOff
@@ -1340,7 +1441,8 @@ const MeetingLobby = ({
                 onClick={() =>
                   void toggleMicrophone()
                 }
-                className="rounded-2xl bg-[#F9F0E0] p-3 text-xs font-bold text-[#3D3732] sm:p-4 sm:text-sm"
+                disabled={!mediaApiAvailable}
+                className="rounded-2xl bg-[#F9F0E0] p-3 text-xs font-bold text-[#3D3732] disabled:cursor-not-allowed disabled:opacity-50 sm:p-4 sm:text-sm"
               >
                 <span className="mb-1 block text-xl">
                   {microphoneOff
@@ -1362,7 +1464,8 @@ const MeetingLobby = ({
                   true
                 )
               }
-              className="mt-2 w-full rounded-2xl border border-[#403A35]/10 bg-white px-5 py-2.5 text-xs font-black text-[#3D3732] transition hover:bg-[#F9F0E0] sm:py-3"
+              disabled={!mediaApiAvailable}
+              className="mt-2 w-full rounded-2xl border border-[#403A35]/10 bg-white px-5 py-2.5 text-xs font-black text-[#3D3732] transition hover:bg-[#F9F0E0] disabled:cursor-not-allowed disabled:opacity-50 sm:py-3"
             >
               🎛 Device settings
             </button>
@@ -1504,6 +1607,9 @@ const LiveMeeting = ({
   const call =
     useCall();
 
+  const rtc =
+    useCohivaRtc();
+
   const {
     user,
   } =
@@ -1529,15 +1635,21 @@ const LiveMeeting = ({
   } =
     useCallStateHooks();
 
-  const participantCount =
+  const streamParticipantCount =
     useParticipantCount();
 
   const callSettings =
     useCallSettings();
 
+  const participantCount =
+    rtc.status === "joined"
+      ? rtc.participants.length
+      : streamParticipantCount;
+
   const maxParticipants =
+    rtc.maxParticipants ||
     callSettings?.limits
-      ?.max_participants ??
+      ?.max_participants ||
     COHIVA_DEFAULT_PARTICIPANTS;
 
   const custom =
@@ -1560,6 +1672,24 @@ const LiveMeeting = ({
     studentRecording:
       false,
   };
+
+  /*
+   * The self-hosted RTC server can end a room independently
+   * (for example when its duration timer expires). In that
+   * case there is no need to wait for the temporary Stream
+   * side-channel to emit call.ended before returning home.
+   */
+  useEffect(() => {
+    if (rtc.status !== "ended") {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      router.replace("/");
+    }, 900);
+
+    return () => window.clearTimeout(timer);
+  }, [router, rtc.status]);
 
   const [
     activeView,
@@ -2645,7 +2775,7 @@ const LiveMeeting = ({
         ) {
           event.preventDefault();
 
-          void call.microphone.toggle();
+          void rtc.toggleMicrophone();
         }
 
         if (
@@ -2654,7 +2784,7 @@ const LiveMeeting = ({
         ) {
           event.preventDefault();
 
-          void call.camera.toggle();
+          void rtc.toggleCamera();
         }
 
         if (
@@ -2753,6 +2883,7 @@ const LiveMeeting = ({
     };
   }, [
     call,
+    rtc,
     toggleHand,
   ]);
 
@@ -2828,10 +2959,6 @@ const LiveMeeting = ({
       >
         {announcement}
       </div>
-
-      <CohivaRecordingIndicator />
-
-      <CohivaRecordingEvents />
 
       {/* =================================================
           HEADER
@@ -3065,10 +3192,6 @@ const LiveMeeting = ({
             </button>
           )}
 
-          {teacher && (
-            <CohivaRecordingControl />
-          )}
-
           <button
             type="button"
             onClick={() =>
@@ -3100,15 +3223,7 @@ const LiveMeeting = ({
             }`}
           >
 
-            <SpeakerLayout
-              participantsBarPosition="right"
-              ParticipantViewUISpotlight={
-                CohivaParticipantSpotlightUI
-              }
-              ParticipantViewUIBar={
-                CohivaParticipantBarUI
-              }
-            />
+            <CohivaRtcStage />
 
           </div>
 
@@ -3185,17 +3300,18 @@ const LiveMeeting = ({
 
       <footer className="flex h-[76px] shrink-0 items-center justify-center border-t border-white/10 bg-[#302B27] px-3">
 
-        <div className="str-video__call-controls">
+        <div className="flex items-center gap-2">
 
-          <SpeakingWhileMutedNotification>
-            <ToggleAudioPublishingButton />
-          </SpeakingWhileMutedNotification>
+          <CohivaRtcControls
+            onOpenDevices={() =>
+              setDeviceSettingsOpen(
+                true
+              )
+            }
+          />
 
-          <ToggleVideoPublishingButton />
-
+          {/* Reactions still use the temporary Stream side-channel in Phase 6A. */}
           <ReactionsButton />
-
-          <ScreenShareButton />
 
           <CohivaLeaveCallControl />
 
@@ -3288,7 +3404,7 @@ const LiveMeeting = ({
         />
       )}
 
-      <MeetingDeviceSettings
+      <CohivaRtcDeviceSettings
         open={
           deviceSettingsOpen
         }

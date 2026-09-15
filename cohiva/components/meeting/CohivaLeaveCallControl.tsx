@@ -9,6 +9,10 @@ import {
 } from "next/navigation";
 
 import {
+  useOptionalCohivaRtc,
+} from "@/components/rtc/CohivaRtcProvider";
+
+import {
   useEffect,
   useState,
 } from "react";
@@ -16,6 +20,9 @@ import {
 const CohivaLeaveCallControl = () => {
   const call =
     useCall();
+
+  const rtc =
+    useOptionalCohivaRtc();
 
   const router =
     useRouter();
@@ -124,7 +131,12 @@ const CohivaLeaveCallControl = () => {
         setAction("leave");
         setError("");
 
-        await call.leave();
+        await Promise.all([
+          call.leave(),
+          rtc
+            ? rtc.disconnect()
+            : Promise.resolve(),
+        ]);
 
         router.replace("/");
       } catch (
@@ -165,7 +177,12 @@ const CohivaLeaveCallControl = () => {
         setAction("leave");
         setError("");
 
-        await call.leave();
+        await Promise.all([
+          call.leave(),
+          rtc
+            ? rtc.disconnect()
+            : Promise.resolve(),
+        ]);
 
         setModalOpen(false);
 
@@ -215,7 +232,12 @@ const CohivaLeaveCallControl = () => {
         setAction("end");
         setError("");
 
-        await call.endCall();
+        await Promise.all([
+          call.endCall(),
+          rtc
+            ? rtc.endMeeting()
+            : Promise.resolve(),
+        ]);
 
         /*
          * Keep the modal in its ending state until

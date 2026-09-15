@@ -17,6 +17,9 @@ import {
   getStreamServerClient,
 } from "@/lib/streamServer";
 
+import connectMongoDB from "@/lib/mongodb";
+import CohivaRtcRoom from "@/models/CohivaRtcRoom";
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -430,6 +433,34 @@ export async function POST(
         },
       },
     });
+
+    /* =====================================================
+       PREPARE COHIVA RTC OWNERSHIP
+
+       Stream remains the Phase 6A metadata source, but the
+       real media path now uses Cohiva RTC. Persist the host
+       here so a participant can never become RTC host simply
+       by requesting the first RTC token.
+    ===================================================== */
+
+    await connectMongoDB();
+
+    await CohivaRtcRoom.findOneAndUpdate(
+      { callId },
+      {
+        $set: {
+          hostUserId: userId,
+        },
+        $setOnInsert: {
+          callId,
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      }
+    );
 
     /* =====================================================
        SUCCESS

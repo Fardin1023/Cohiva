@@ -97,6 +97,7 @@ const CohivaSignUpForm = () => {
 
   return (
     <form
+      method="post"
       onSubmit={handleSubmit}
       className="space-y-4"
     >

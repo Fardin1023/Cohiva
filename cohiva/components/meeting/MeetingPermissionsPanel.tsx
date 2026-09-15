@@ -16,6 +16,10 @@ import {
 import MeetingAccessSettings from "./MeetingAccessSettings";
 import MeetingLimitsSettings from "./MeetingLimitsSettings";
 
+import {
+  useOptionalCohivaRtc,
+} from "@/components/rtc/CohivaRtcProvider";
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -70,6 +74,9 @@ const MeetingPermissionsPanel = ({
 }: MeetingPermissionsPanelProps) => {
   const call =
     useCall();
+
+  const rtc =
+    useOptionalCohivaRtc();
 
   const {
     useCallCustomData,
@@ -387,6 +394,18 @@ const MeetingPermissionsPanel = ({
             studentIds,
             nextPermissions
           );
+
+          const rtcField =
+            key === "studentMic"
+              ? "studentMic"
+              : key === "studentCamera"
+                ? "studentCamera"
+                : "studentScreenShare";
+
+          await rtc?.updateRoomPermission(
+            rtcField,
+            nextPermissions[rtcField]
+          );
         }
       } catch (
         permissionError
@@ -609,11 +628,11 @@ const MeetingPermissionsPanel = ({
                   </p>
 
                   <p className="mt-1 text-[9px] font-black uppercase tracking-wider text-[#CC3A63]">
-                    Teacher only
+                    Temporarily unavailable
                   </p>
 
                   <p className="mt-1 text-[10px] leading-4 text-[#756E64]">
-                    Students cannot start or stop Cohiva recordings.
+                    Recording is disabled while live media is being migrated to Cohiva RTC.
                   </p>
 
                 </div>

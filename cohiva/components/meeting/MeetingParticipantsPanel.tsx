@@ -21,6 +21,10 @@ import type {
 } from "./MeetingPermissionsPanel";
 
 import {
+  useOptionalCohivaRtc,
+} from "@/components/rtc/CohivaRtcProvider";
+
+import {
   getIndividualPermissionMap,
   saveIndividualPermission,
 } from "./cohivaParticipantPermissions";
@@ -75,6 +79,9 @@ const MeetingParticipantsPanel = ({
 }: MeetingParticipantsPanelProps) => {
   const call =
     useCall();
+
+  const rtc =
+    useOptionalCohivaRtc();
 
   const {
     useParticipants,
@@ -585,6 +592,12 @@ const MeetingParticipantsPanel = ({
             true
           );
 
+          await rtc?.setIndividualPermission(
+            userId,
+            "audio",
+            true
+          );
+
           setBlockedMic(
             (
               current
@@ -625,6 +638,12 @@ const MeetingParticipantsPanel = ({
         await saveIndividualPermission(
           call,
           custom,
+          userId,
+          "audio",
+          false
+        );
+
+        await rtc?.setIndividualPermission(
           userId,
           "audio",
           false
@@ -739,6 +758,12 @@ const MeetingParticipantsPanel = ({
             true
           );
 
+          await rtc?.setIndividualPermission(
+            userId,
+            "video",
+            true
+          );
+
           setBlockedCamera(
             (
               current
@@ -779,6 +804,12 @@ const MeetingParticipantsPanel = ({
         await saveIndividualPermission(
           call,
           custom,
+          userId,
+          "video",
+          false
+        );
+
+        await rtc?.setIndividualPermission(
           userId,
           "video",
           false
@@ -893,6 +924,12 @@ const MeetingParticipantsPanel = ({
             true
           );
 
+          await rtc?.setIndividualPermission(
+            userId,
+            "screenShare",
+            true
+          );
+
           setBlockedShare(
             (
               current
@@ -933,6 +970,12 @@ const MeetingParticipantsPanel = ({
         await saveIndividualPermission(
           call,
           custom,
+          userId,
+          "screenShare",
+          false
+        );
+
+        await rtc?.setIndividualPermission(
           userId,
           "screenShare",
           false
@@ -1071,9 +1114,16 @@ const MeetingParticipantsPanel = ({
           ""
         );
 
-        await call.muteOthers(
-          bulkControl
-        );
+        await Promise.all([
+          call.muteOthers(
+            bulkControl
+          ),
+          rtc
+            ? rtc.muteOthers(
+                bulkControl
+              )
+            : Promise.resolve(),
+        ]);
 
         setBulkControl(
           null
@@ -1171,10 +1221,18 @@ const MeetingParticipantsPanel = ({
 
         setError("");
 
-        await call.kickUser({
-          user_id:
-            userId,
-        });
+        await Promise.all([
+          call.kickUser({
+            user_id:
+              userId,
+          }),
+          rtc
+            ? rtc.moderateParticipant(
+                userId,
+                "kick"
+              )
+            : Promise.resolve(),
+        ]);
       } catch (
         moderationError
       ) {
@@ -1233,7 +1291,12 @@ const MeetingParticipantsPanel = ({
 
         setError("");
 
-        await call.endCall();
+        await Promise.all([
+          call.endCall(),
+          rtc
+            ? rtc.endMeeting()
+            : Promise.resolve(),
+        ]);
       } catch (
         endError
       ) {
@@ -1678,20 +1741,31 @@ const MeetingParticipantsPanel = ({
                    CURRENT MEDIA TRACKS
                 ===================================== */
 
+                const rtcMedia =
+                  rtc?.mediaStateByUser[
+                    participantId
+                  ];
+
                 const micPublishing =
-                  hasAudio(
-                    participant
-                  );
+                  rtcMedia
+                    ? rtcMedia.audio
+                    : hasAudio(
+                        participant
+                      );
 
                 const cameraPublishing =
-                  hasVideo(
-                    participant
-                  );
+                  rtcMedia
+                    ? rtcMedia.video
+                    : hasVideo(
+                        participant
+                      );
 
                 const sharing =
-                  hasScreenShare(
-                    participant
-                  );
+                  rtcMedia
+                    ? rtcMedia.screenShare
+                    : hasScreenShare(
+                        participant
+                      );
 
                 /* =====================================
                    INDIVIDUAL PERMISSION STATE
