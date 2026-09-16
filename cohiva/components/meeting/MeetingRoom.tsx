@@ -1,36 +1,16 @@
 "use client";
 
 import {
-  COHIVA_CALL_TYPE,
   COHIVA_DEFAULT_DURATION_MINUTES,
   COHIVA_DEFAULT_PARTICIPANTS,
 } from "@/lib/cohivaMeetingConfig";
-
-import {
-  CallingState,
-  ReactionsButton,
-  StreamCall,
-  StreamTheme,
-  VideoPreview,
-  useCall,
-  useCallStateHooks,
-  useStreamVideoClient,
-  type Call,
-  type CustomVideoEvent,
-  type StreamVideoEvent,
-} from "@stream-io/video-react-sdk";
-
 import { useUser } from "@/components/providers/AuthProvider";
-import {
-  CohivaRtcProvider,
-  useCohivaRtc,
-} from "@/components/rtc/CohivaRtcProvider";
+import { CohivaRtcProvider, useCohivaRtc } from "@/components/rtc/CohivaRtcProvider";
 import CohivaRtcStage from "@/components/rtc/CohivaRtcStage";
 import CohivaRtcControls from "@/components/rtc/CohivaRtcControls";
 import CohivaRtcDeviceSettings from "@/components/rtc/CohivaRtcDeviceSettings";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-
 import {
   useCallback,
   useEffect,
@@ -38,3454 +18,476 @@ import {
   useRef,
   useState,
 } from "react";
-
+import { useSmartPolling } from "@/lib/useSmartPolling";
 import CohivaWhiteboard from "./CohivaWhiteboard";
 import CohivaLeaveCallControl from "./CohivaLeaveCallControl";
 import MeetingConnectionStatus from "./MeetingConnectionStatus";
-
 import MeetingPermissionsPanel, {
   DEFAULT_COHIVA_PERMISSIONS,
   type CohivaPermissions,
 } from "./MeetingPermissionsPanel";
-
-
 import MeetingCaptionsOverlay from "./MeetingCaptionsOverlay";
 import MeetingSessionTimer from "./MeetingSessionTimer";
+import MeetingAccessSettings from "./MeetingAccessSettings";
+import MeetingLimitsSettings from "./MeetingLimitsSettings";
+import MeetingJoinRequests from "./MeetingJoinRequests";
+import type { AccessibilitySettings } from "./meetingAccessibilityTypes";
 
-import type {
-  AccessibilitySettings,
-} from "./meetingAccessibilityTypes";
+const MeetingParticipantsPanel = dynamic(() => import("./MeetingParticipantsPanel"));
+const MeetingChatPanel = dynamic(() => import("./MeetingChatPanel"));
+const MeetingAttendancePanel = dynamic(() => import("./MeetingAttendancePanel"));
+const MeetingAccessibilityPanel = dynamic(() => import("./MeetingAccessibilityPanel"));
 
-/* =========================================================
-   LAZY MEETING PANELS
+type MeetingRoomProps = { callId: string; shouldCreate: boolean };
+type MeetingView = "video" | "whiteboard";
+type MeetingAccessMode = "open" | "approval" | "locked";
+type AccessStatus = "idle" | "requesting" | "waiting" | "approved" | "denied";
 
-   These large panels are not needed for the initial video
-   experience. Load them only when the user opens them.
-========================================================= */
-
-const MeetingParticipantsPanel = dynamic(
-  () => import("./MeetingParticipantsPanel")
-);
-
-const MeetingChatPanel = dynamic(
-  () => import("./MeetingChatPanel")
-);
-
-const MeetingAttendancePanel = dynamic(
-  () => import("./MeetingAttendancePanel")
-);
-
-const MeetingAccessibilityPanel = dynamic(
-  () => import("./MeetingAccessibilityPanel")
-);
-
-const MeetingJoinRequests = dynamic(
-  () => import("./MeetingJoinRequests")
-);
-
-const MeetingAccessSettings = dynamic(
-  () => import("./MeetingAccessSettings")
-);
-
-const MeetingLimitsSettings = dynamic(
-  () => import("./MeetingLimitsSettings")
-);
-
-const MeetingDeviceSettings = dynamic(
-  () => import("./MeetingDeviceSettings")
-);
-
-/* =========================================================
-   TYPES
-========================================================= */
-
-type MeetingRoomProps = {
+type RoomMetadata = {
   callId: string;
-  shouldCreate: boolean;
+  hostUserId: string;
+  teacher: boolean;
+  kind: "instant" | "scheduled" | "personal";
+  title: string;
+  description: string;
+  startsAt: string | null;
+  accessMode: MeetingAccessMode;
+  durationMinutes: number;
+  maxParticipants: number;
+  endedAt: string | null;
+  permissions?: Partial<CohivaPermissions>;
 };
 
-type MeetingView =
-  | "video"
-  | "whiteboard";
+type FloatingReaction = { id: string; emoji: string; name: string };
+type ChatNotification = { senderId: string; senderName: string; senderImage: string; text: string };
+type RaisedHandInfo = { userId: string; name: string; image: string; raisedAt: string };
 
-type MeetingAccessMode =
-  | "open"
-  | "approval"
-  | "locked";
-
-type AccessStatus =
-  | "idle"
-  | "requesting"
-  | "waiting"
-  | "approved"
-  | "denied";
-
-type FloatingReaction = {
-  id: string;
-  emoji: string;
-  name: string;
-};
-
-type ChatNotification = {
-  senderId: string;
-  senderName: string;
-  senderImage: string;
-  text: string;
-};
-
-type RaisedHandInfo = {
-  userId: string;
-  name: string;
-  image: string;
-  raisedAt: string;
-};
-
-type HandNotification = {
-  userId: string;
-  name: string;
-  image: string;
-};
-
-/* =========================================================
-   CONFIG
-========================================================= */
-
-const ACCESS_KEY =
-  "cohiva_access_mode";
-
-/* =========================================================
-   HELPERS
-========================================================= */
-
-const normalizeAccessMode = (
-  value: unknown
-): MeetingAccessMode => {
-  if (
-    value === "open" ||
-    value === "approval" ||
-    value === "locked"
-  ) {
-    return value;
-  }
-
-  return "approval";
-};
-
-/* =========================================================
-   MAIN MEETING ROOM
-========================================================= */
-
-const MeetingRoom = ({
-  callId,
-  shouldCreate,
-}: MeetingRoomProps) => {
-  const client =
-    useStreamVideoClient();
-
-  const {
-    user,
-  } =
-    useUser();
-
-  const userId =
-    user?.id;
-
-  const [
-    call,
-    setCall,
-  ] =
-    useState<Call>();
-
-  const [
-    error,
-    setError,
-  ] =
-    useState("");
-
-  const callRef =
-    useRef<Call | null>(
-      null
-    );
-
-  const callIdRef =
-    useRef<string | null>(
-      null
-    );
-
-  const callClientRef =
-    useRef(
-      client
-    );
-
-  const mountedRef =
-    useRef(false);
-
-  const cleanupTimerRef =
-    useRef<
-      ReturnType<
-        typeof setTimeout
-      > | null
-    >(null);
-
-  /* =====================================================
-     COMPONENT LIFETIME
-  ===================================================== */
+const MeetingRoom = ({ callId, shouldCreate }: MeetingRoomProps) => {
+  const { user } = useUser();
+  const [room, setRoom] = useState<RoomMetadata | null>(null);
+  const [joined, setJoined] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    mountedRef.current =
-      true;
-
-    if (
-      cleanupTimerRef.current
-    ) {
-      clearTimeout(
-        cleanupTimerRef.current
-      );
-
-      cleanupTimerRef.current =
-        null;
-    }
-
-    return () => {
-      mountedRef.current =
-        false;
-
-      cleanupTimerRef.current =
-        setTimeout(
-          () => {
-            if (
-              mountedRef.current
-            ) {
-              return;
-            }
-
-            const currentCall =
-              callRef.current;
-
-            if (
-              !currentCall ||
-              currentCall.state
-                .callingState ===
-                CallingState.LEFT
-            ) {
-              return;
-            }
-
-            void currentCall
-              .leave()
-              .catch(
-                (
-                  cleanupError
-                ) => {
-                  const message =
-                    cleanupError instanceof
-                      Error
-                      ? cleanupError.message
-                      : String(
-                          cleanupError
-                        );
-
-                  if (
-                    !message
-                      .toLowerCase()
-                      .includes(
-                        "already been left"
-                      )
-                  ) {
-                    console.error(
-                      "Meeting cleanup error:",
-                      cleanupError
-                    );
-                  }
-                }
-              );
-          },
-          5000
-        );
-    };
-  }, []);
-
-  /* =====================================================
-     INITIALIZE CALL
-  ===================================================== */
-
-  useEffect(() => {
-    if (
-      !client ||
-      !userId
-    ) {
-      return;
-    }
-
-    let cancelled =
-      false;
-
-    if (
-      callRef.current &&
-      callIdRef.current ===
-        callId &&
-      callClientRef.current ===
-        client
-    ) {
-      setCall(
-        callRef.current
-      );
-
-      return;
-    }
-
-    const previousCall =
-      callRef.current;
-
-    if (
-      previousCall &&
-      previousCall.state
-        .callingState !==
-        CallingState.LEFT
-    ) {
-      void previousCall
-        .leave()
-        .catch(
-          (
-            leaveError
-          ) => {
-            const message =
-              leaveError instanceof
-                Error
-                ? leaveError.message
-                : String(
-                    leaveError
-                  );
-
-            if (
-              !message
-                .toLowerCase()
-                .includes(
-                  "already been left"
-                )
-            ) {
-              console.error(
-                "Previous meeting cleanup error:",
-                leaveError
-              );
-            }
-          }
-        );
-    }
-
-    const streamCall =
-      client.call(
-        COHIVA_CALL_TYPE,
-        callId
-      );
-
-    callRef.current =
-      streamCall;
-
-    callIdRef.current =
-      callId;
-
-    callClientRef.current =
-      client;
-
-    setCall(
-      streamCall
-    );
-
-    const initialize =
-      async () => {
-        try {
-          setError("");
-
-          if (
-            shouldCreate
-          ) {
-            const response =
-              await fetch(
-                "/api/meetings/create",
-                {
-                  method: "POST",
-                  headers: {
-                    "Content-Type":
-                      "application/json",
-                  },
-                  body: JSON.stringify({
-                    kind: "instant",
-                    callId,
-                    durationMinutes:
-                      COHIVA_DEFAULT_DURATION_MINUTES,
-                    maxParticipants:
-                      COHIVA_DEFAULT_PARTICIPANTS,
-                  }),
-                }
-              );
-
-            const result =
-              await response.json();
-
-            if (!response.ok) {
-              throw new Error(
-                result.error ||
-                  "Cohiva could not create this meeting."
-              );
-            }
-
-            await streamCall.get();
-          } else {
-            await streamCall.get();
-          }
-
-          if (
-            cancelled
-          ) {
-            return;
-          }
-
-          setCall(
-            streamCall
-          );
-        } catch (
-          initializationError
-        ) {
-          console.error(
-            "Meeting initialization error:",
-            initializationError
-          );
-
-          if (
-            cancelled
-          ) {
-            return;
-          }
-
-          setError(
-            shouldCreate
-              ? "Cohiva could not create this meeting."
-              : "This meeting could not be found."
-          );
+    if (!user?.id) return;
+    let cancelled = false;
+    const initialize = async () => {
+      try {
+        setLoading(true);
+        setError("");
+        if (shouldCreate) {
+          const createResponse = await fetch("/api/meetings/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              kind: "instant",
+              callId,
+              durationMinutes: COHIVA_DEFAULT_DURATION_MINUTES,
+              maxParticipants: COHIVA_DEFAULT_PARTICIPANTS,
+            }),
+          });
+          const createResult = await createResponse.json();
+          if (!createResponse.ok) throw new Error(createResult.error || "Cohiva could not create this meeting.");
         }
-      };
 
+        const response = await fetch(`/api/meetings/room?callId=${encodeURIComponent(callId)}`, { cache: "no-store" });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "This meeting could not be found.");
+        if (!cancelled) setRoom(result.room);
+      } catch (initializationError) {
+        if (!cancelled) setError(initializationError instanceof Error ? initializationError.message : "Unable to open this meeting.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
     void initialize();
+    return () => { cancelled = true; };
+  }, [callId, shouldCreate, user?.id]);
 
-    return () => {
-      cancelled =
-        true;
-    };
-  }, [
-    client,
-    callId,
-    shouldCreate,
-    userId,
-  ]);
+  if (loading || !user) return <MeetingLoading text="Connecting to Cohiva..." />;
+  if (error) return <MeetingError message={error} />;
+  if (!room) return <MeetingLoading text="Finding your Cohiva room..." />;
+  if (room.endedAt) return <MeetingError message="This Cohiva meeting has already ended." />;
 
-  if (
-    !client ||
-    !userId
-  ) {
-    return (
-      <MeetingLoading
-        text="Connecting to Cohiva..."
-      />
-    );
-  }
-
-  if (
-    !call &&
-    !error
-  ) {
-    return (
-      <MeetingLoading
-        text={
-          shouldCreate
-            ? "Creating your Cohiva room..."
-            : "Finding your Cohiva room..."
-        }
-      />
-    );
-  }
-
-  if (
-    error
-  ) {
-    return (
-      <MeetingError
-        message={
-          error
-        }
-      />
-    );
-  }
-
-  if (
-    !call
-  ) {
-    return null;
+  if (!joined) {
+    return <MeetingLobby callId={callId} room={room} onJoined={() => setJoined(true)} />;
   }
 
   return (
-    <StreamCall
-      call={
-        call
-      }
-    >
-      <StreamTheme className="cohiva-stream-theme">
-
-        <MeetingConnectionStatus />
-
-        <MeetingExperience
-          callId={
-            callId
-          }
-        />
-
-      </StreamTheme>
-    </StreamCall>
+    <CohivaRtcProvider callId={callId}>
+      <MeetingConnectionStatus />
+      <LiveMeeting callId={callId} initialPermissions={room.permissions} />
+    </CohivaRtcProvider>
   );
 };
 
 export default MeetingRoom;
 
-/* =========================================================
-   EXPERIENCE
-========================================================= */
-
-const MeetingExperience = ({
-  callId,
-}: {
-  callId: string;
-}) => {
-  const {
-    useCallCallingState,
-  } =
-    useCallStateHooks();
-
-  const callingState =
-    useCallCallingState();
-
-  const [
-    hasJoinedThisSession,
-    setHasJoinedThisSession,
-  ] =
-    useState(false);
-
-  /*
-   * Stream automatically reconnects after temporary network
-   * interruptions. Once this user has joined, keep the live
-   * meeting mounted through OFFLINE / RECONNECTING / JOINING
-   * / MIGRATING states so local Cohiva UI state is not lost
-   * and the user is not incorrectly sent back to the lobby.
-   */
-  useEffect(() => {
-    if (
-      callingState ===
-      CallingState.JOINED
-    ) {
-      setHasJoinedThisSession(
-        true
-      );
-    }
-  }, [callingState]);
-
-  const preservingLiveMeeting =
-    (
-      hasJoinedThisSession ||
-      callingState ===
-        CallingState.JOINED
-    ) &&
-    (
-      callingState ===
-        CallingState.JOINED ||
-      callingState ===
-        CallingState.JOINING ||
-      callingState ===
-        CallingState.RECONNECTING ||
-      callingState ===
-        CallingState.RECONNECTING_FAILED ||
-      callingState ===
-        CallingState.MIGRATING ||
-      callingState ===
-        CallingState.OFFLINE
-    );
-
-  if (
-    preservingLiveMeeting
-  ) {
-    return (
-      <CohivaRtcProvider
-        callId={
-          callId
-        }
-      >
-        <LiveMeeting
-          callId={
-            callId
-          }
-        />
-      </CohivaRtcProvider>
-    );
-  }
-
-  return (
-    <MeetingLobby
-      callId={
-        callId
-      }
-    />
-  );
-};
-
-/* =========================================================
-   LOBBY
-========================================================= */
-
-const MeetingLobby = ({
-  callId,
-}: {
-  callId: string;
-}) => {
-  const router =
-    useRouter();
-
-  const call =
-    useCall();
-
-  const {
-    user,
-  } =
-    useUser();
-
-  const {
-    useCameraState,
-    useMicrophoneState,
-    useSpeakerState,
-    useCallCallingState,
-    useCallCustomData,
-    useParticipantCount,
-    useCallSettings,
-  } =
-    useCallStateHooks();
-
-  const {
-    camera,
-    isMute:
-      cameraOff,
-    selectedDevice:
-      selectedCameraDevice,
-  } =
-    useCameraState();
-
-  const {
-    microphone,
-    isMute:
-      microphoneOff,
-    selectedDevice:
-      selectedMicrophoneDevice,
-  } =
-    useMicrophoneState();
-
-  const {
-    selectedDevice:
-      selectedSpeakerDevice,
-  } =
-    useSpeakerState();
-
-  const callingState =
-    useCallCallingState();
-
-  const custom =
-    useCallCustomData();
-
-  const lobbyParticipantCount =
-    useParticipantCount();
-
-  const lobbySettings =
-    useCallSettings();
-
-  const lobbyMaxParticipants =
-    lobbySettings?.limits
-      ?.max_participants ??
-    COHIVA_DEFAULT_PARTICIPANTS;
-
-  const accessMode =
-    normalizeAccessMode(
-      custom?.[
-        ACCESS_KEY
-      ]
-    );
-
-  const teacher =
-    Boolean(
-      call?.isCreatedByMe
-    );
-
-  const roomFull =
-    !teacher &&
-    lobbyParticipantCount >=
-      lobbyMaxParticipants;
-
-  const [
-    error,
-    setError,
-  ] =
-    useState("");
-
-  const [
-    copied,
-    setCopied,
-  ] =
-    useState(false);
-
-  const [
-    deviceSettingsOpen,
-    setDeviceSettingsOpen,
-  ] =
-    useState(false);
-
-  const [
-    mediaApiAvailable,
-    setMediaApiAvailable,
-  ] =
-    useState(true);
-
-  useEffect(() => {
-    const supported =
-      typeof window !== "undefined" &&
-      window.isSecureContext &&
-      typeof navigator !== "undefined" &&
-      Boolean(
-        navigator.mediaDevices?.getUserMedia
-      );
-
-    setMediaApiAvailable(
-      supported
-    );
-
-    if (!supported) {
-      void Promise.allSettled([
-        camera.disable(),
-        microphone.disable(),
-      ]);
-    }
-  }, [camera, microphone]);
-
-  const [
-    accessStatus,
-    setAccessStatus,
-  ] =
-    useState<AccessStatus>(
-      "idle"
-    );
-
-  const joiningRef =
-    useRef(false);
-
-  const ensureMembership =
-    useCallback(
-      async () => {
-        const response =
-          await fetch(
-            "/api/meetings/member",
-            {
-              method:
-                "POST",
-
-              headers: {
-                "Content-Type":
-                  "application/json",
-              },
-
-              body:
-                JSON.stringify({
-                  callId,
-                }),
-            }
-          );
-
-        const result =
-          await response.json();
-
-        if (
-          !response.ok
-        ) {
-          throw new Error(
-            result.error ||
-              "Unable to prepare meeting membership."
-          );
-        }
-      },
-      [
-        callId,
-      ]
-    );
-
-  const joinApproved =
-    useCallback(
-      async () => {
-        if (
-          !call ||
-          joiningRef.current ||
-          callingState ===
-            CallingState.JOINED
-        ) {
-          return;
-        }
-
-        try {
-          joiningRef.current =
-            true;
-
-          setError("");
-
-          setAccessStatus(
-            "approved"
-          );
-
-          /*
-           * Phase 6A:
-           * Stream remains connected only as Cohiva's temporary
-           * chat/whiteboard/attendance side-channel. Preserve the
-           * lobby media choices for Cohiva RTC, then make sure no
-           * camera or microphone is published to Stream.
-           */
-          try {
-            window.sessionStorage.setItem(
-              `cohiva-rtc-prejoin:${callId}`,
-              JSON.stringify({
-                microphone:
-                  mediaApiAvailable &&
-                  !microphoneOff,
-                camera:
-                  mediaApiAvailable &&
-                  !cameraOff,
-                audioDeviceId:
-                  selectedMicrophoneDevice || "",
-                videoDeviceId:
-                  selectedCameraDevice || "",
-                audioOutputDeviceId:
-                  selectedSpeakerDevice || "",
-              })
-            );
-          } catch {}
-
-          await Promise.allSettled([
-            camera.disable(),
-            microphone.disable(),
-          ]);
-
-          await call.join();
-        } catch (
-          joinError
-        ) {
-          console.error(
-            "Join meeting error:",
-            joinError
-          );
-
-          joiningRef.current =
-            false;
-
-          setAccessStatus(
-            "idle"
-          );
-
-          const message =
-            joinError instanceof Error
-              ? joinError.message
-              : "";
-
-          const normalized =
-            message.toLowerCase();
-
-          setError(
-            normalized.includes("participant") &&
-            (
-              normalized.includes("limit") ||
-              normalized.includes("maximum") ||
-              normalized.includes("full")
-            )
-              ? "This Cohiva meeting is full. The host has reached the participant limit."
-              : normalized.includes("ended")
-                ? "This Cohiva meeting has already ended."
-                : message ||
-                  "Cohiva could not join this meeting."
-          );
-        }
-      },
-      [
-        call,
-        callingState,
-        callId,
-        camera,
-        cameraOff,
-        microphone,
-        microphoneOff,
-        selectedCameraDevice,
-        selectedMicrophoneDevice,
-        selectedSpeakerDevice,
-        mediaApiAvailable,
-      ]
-    );
-
-  useEffect(() => {
-    if (
-      teacher ||
-      accessStatus !==
-        "waiting"
-    ) {
-      return;
-    }
-
-    let stopped =
-      false;
-
-    const checkStatus =
-      async () => {
-        try {
-          const response =
-            await fetch(
-              `/api/meetings/join-request?callId=${encodeURIComponent(
-                callId
-              )}&scope=mine`,
-              {
-                cache:
-                  "no-store",
-              }
-            );
-
-          const result =
-            await response.json();
-
-          if (
-            !response.ok ||
-            stopped
-          ) {
-            return;
-          }
-
-          if (
-            result.status ===
-            "approved"
-          ) {
-            await joinApproved();
-
-            return;
-          }
-
-          if (
-            result.status ===
-            "denied"
-          ) {
-            setAccessStatus(
-              "denied"
-            );
-
-            setError("");
-          }
-        } catch (
-          pollError
-        ) {
-          console.error(
-            "Waiting room status error:",
-            pollError
-          );
-        }
-      };
-
-    void checkStatus();
-
-    const timer =
-      window.setInterval(
-        () => {
-          void checkStatus();
-        },
-        1200
-      );
-
-    return () => {
-      stopped =
-        true;
-
-      window.clearInterval(
-        timer
-      );
-    };
-  }, [
-    teacher,
-    accessStatus,
-    callId,
-    joinApproved,
-  ]);
-
-  useEffect(() => {
-    if (
-      teacher ||
-      accessStatus !==
-        "waiting"
-    ) {
-      return;
-    }
-
-    if (
-      accessMode ===
-      "open"
-    ) {
-      const enterOpen =
-        async () => {
-          try {
-            await ensureMembership();
-
-            await joinApproved();
-          } catch (
-            openError
-          ) {
-            console.error(
-              "Open meeting join error:",
-              openError
-            );
-
-            setAccessStatus(
-              "idle"
-            );
-
-            setError(
-              "Unable to enter the meeting."
-            );
-          }
-        };
-
-      void enterOpen();
-
-      return;
-    }
-
-    if (
-      accessMode ===
-      "locked"
-    ) {
-      setAccessStatus(
-        "idle"
-      );
-
-      setError(
-        "The host locked this meeting."
-      );
-    }
-  }, [
-    teacher,
-    accessStatus,
-    accessMode,
-    ensureMembership,
-    joinApproved,
-  ]);
-
-  const toggleCamera =
-    async () => {
-      if (!mediaApiAvailable) {
-        setError(
-          "Camera and microphone access requires a secure browser context. For LAN testing, mark this development origin as secure or use HTTPS."
-        );
-        return;
-      }
-
-      try {
-        setError("");
-
-        await camera.toggle();
-      } catch (
-        cameraError
-      ) {
-        console.error(
-          cameraError
-        );
-
-        setError(
-          "Cohiva could not access your camera."
-        );
-      }
-    };
-
-  const toggleMicrophone =
-    async () => {
-      if (!mediaApiAvailable) {
-        setError(
-          "Camera and microphone access requires a secure browser context. For LAN testing, mark this development origin as secure or use HTTPS."
-        );
-        return;
-      }
-
-      try {
-        setError("");
-
-        await microphone.toggle();
-      } catch (
-        microphoneError
-      ) {
-        console.error(
-          microphoneError
-        );
-
-        setError(
-          "Cohiva could not access your microphone."
-        );
-      }
-    };
-
-  const joinMeeting =
-    async () => {
-      if (
-        !call ||
-        !user
-      ) {
-        return;
-      }
-
-      if (
-        joiningRef.current ||
-        callingState ===
-          CallingState.JOINING ||
-        callingState ===
-          CallingState.JOINED
-      ) {
-        return;
-      }
-
-      if (
-        teacher
-      ) {
-        await joinApproved();
-
-        return;
-      }
-
-      try {
-        setError("");
-
-        if (
-          accessMode ===
-          "locked"
-        ) {
-          setError(
-            "This meeting is currently locked by the host."
-          );
-
-          return;
-        }
-
-        if (
-          accessMode ===
-          "open"
-        ) {
-          setAccessStatus(
-            "requesting"
-          );
-
-          await ensureMembership();
-
-          await joinApproved();
-
-          return;
-        }
-
-        setAccessStatus(
-          "requesting"
-        );
-
-        const response =
-          await fetch(
-            "/api/meetings/join-request",
-            {
-              method:
-                "POST",
-
-              headers: {
-                "Content-Type":
-                  "application/json",
-              },
-
-              body:
-                JSON.stringify({
-                  callId,
-                  action:
-                    "request",
-                  name:
-                    user.fullName ||
-                    user.username ||
-                    user.firstName ||
-                    "Participant",
-                  image:
-                    user.imageUrl ||
-                    "",
-                }),
-            }
-          );
-
-        const result =
-          await response.json();
-
-        if (
-          !response.ok
-        ) {
-          throw new Error(
-            result.error ||
-              "Unable to send join request."
-          );
-        }
-
-        if (
-          result.status ===
-          "open"
-        ) {
-          await ensureMembership();
-
-          await joinApproved();
-
-          return;
-        }
-
-        if (
-          result.status ===
-          "approved"
-        ) {
-          await joinApproved();
-
-          return;
-        }
-
-        setAccessStatus(
-          "waiting"
-        );
-      } catch (
-        requestError
-      ) {
-        console.error(
-          requestError
-        );
-
-        setAccessStatus(
-          "idle"
-        );
-
-        setError(
-          requestError instanceof
-            Error
-            ? requestError.message
-            : "Unable to send join request."
-        );
-      }
-    };
-
-  const copyInvite =
-    async () => {
-      try {
-        await navigator.clipboard.writeText(
-          `${window.location.origin}/meeting/${callId}`
-        );
-
-        setCopied(
-          true
-        );
-
-        window.setTimeout(
-          () =>
-            setCopied(
-              false
-            ),
-          1800
-        );
-      } catch {
-        setError(
-          "Unable to copy meeting link."
-        );
-      }
-    };
-
-  const waiting =
-    accessStatus ===
-    "waiting";
-
-  const requesting =
-    accessStatus ===
-    "requesting";
-
-  return (
-    <main className="flex min-h-dvh w-full items-start justify-center overflow-y-auto bg-[#F9F0E0] p-2 sm:p-4 lg:h-dvh lg:items-center lg:overflow-hidden lg:p-6">
-
-      <div className="grid w-full max-w-[1450px] overflow-hidden rounded-[24px] bg-[#FFF7EB] shadow-[0_30px_90px_rgba(61,55,50,0.16)] sm:rounded-[30px] lg:h-full lg:max-h-[850px] lg:grid-cols-[1.15fr_0.9fr]">
-
-        <section className="relative h-[190px] min-h-[190px] overflow-hidden bg-[#302B27] sm:h-[260px] sm:min-h-[260px] lg:h-auto lg:min-h-0">
-
-          <div className="absolute left-3 top-3 z-30 rounded-full bg-[#CC3A63] px-3 py-2 text-[9px] font-black uppercase tracking-[0.18em] text-white sm:left-5 sm:top-5 sm:px-4 sm:text-[10px]">
-            Cohiva Preview
-          </div>
-
-          {mediaApiAvailable && !cameraOff && (
-            <div className="cohiva-preview-video absolute inset-0">
-              <VideoPreview />
-            </div>
-          )}
-
-          {(!mediaApiAvailable || cameraOff) && (
-            <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#302B27]">
-
-              <div className="text-center">
-
-                <div className="text-4xl sm:text-5xl">
-                  📷
-                </div>
-
-                <p className="mt-2 text-base font-black text-white sm:mt-4 sm:text-xl">
-                  {mediaApiAvailable
-                    ? "Camera is off"
-                    : "Camera preview unavailable"}
-                </p>
-
-                {!mediaApiAvailable && (
-                  <p className="mx-auto mt-2 max-w-sm px-4 text-xs font-semibold leading-5 text-white/70">
-                    This LAN page is using an insecure HTTP origin. Allow this development origin as secure or use HTTPS to enable camera and microphone access.
-                  </p>
-                )}
-
-              </div>
-
-            </div>
-          )}
-
-        </section>
-
-        <section className="flex min-h-0 flex-col p-4 sm:p-6 lg:overflow-y-auto lg:p-8">
-
-          <div className="my-0 lg:my-auto">
-
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#A2AB73]">
-              Ready to meet?
-            </p>
-
-            <h1 className="mt-1.5 text-2xl font-black leading-tight text-[#3D3732] sm:mt-2 sm:text-3xl">
-              {teacher
-                ? "Start your classroom ✨"
-                : "Join the classroom ✨"}
-            </h1>
-
-            {!teacher && (
-              <div className="mt-3">
-
-                {accessMode ===
-                  "open" && (
-                  <p className="text-sm leading-6 text-[#756E64]">
-                    🌐 This meeting is open. You can enter immediately.
-                  </p>
-                )}
-
-                {accessMode ===
-                  "approval" && (
-                  <p className="text-sm leading-6 text-[#756E64]">
-                    🚪 The meeting opener must approve your request.
-                  </p>
-                )}
-
-                {accessMode ===
-                  "locked" && (
-                  <p className="text-sm leading-6 text-[#CC3A63]">
-                    🔒 The host is not allowing new participants.
-                  </p>
-                )}
-
-              </div>
-            )}
-
-            {teacher && (
-              <div className="mt-3 sm:mt-5">
-
-                <MeetingAccessSettings
-                  callId={
-                    callId
-                  }
-                />
-
-                <div className="mt-3">
-                  <MeetingLimitsSettings
-                    callId={
-                      callId
-                    }
-                    compact
-                  />
-                </div>
-
-              </div>
-            )}
-
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3">
-
-              <button
-                type="button"
-                onClick={() =>
-                  void toggleCamera()
-                }
-                disabled={!mediaApiAvailable}
-                className="rounded-2xl bg-[#F9F0E0] p-3 text-xs font-bold text-[#3D3732] disabled:cursor-not-allowed disabled:opacity-50 sm:p-4 sm:text-sm"
-              >
-                <span className="mb-1 block text-xl">
-                  {cameraOff
-                    ? "📷"
-                    : "🎥"}
-                </span>
-
-                {cameraOff
-                  ? "Camera off"
-                  : "Camera on"}
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  void toggleMicrophone()
-                }
-                disabled={!mediaApiAvailable}
-                className="rounded-2xl bg-[#F9F0E0] p-3 text-xs font-bold text-[#3D3732] disabled:cursor-not-allowed disabled:opacity-50 sm:p-4 sm:text-sm"
-              >
-                <span className="mb-1 block text-xl">
-                  {microphoneOff
-                    ? "🔇"
-                    : "🎙"}
-                </span>
-
-                {microphoneOff
-                  ? "Mic off"
-                  : "Mic on"}
-              </button>
-
-            </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                setDeviceSettingsOpen(
-                  true
-                )
-              }
-              disabled={!mediaApiAvailable}
-              className="mt-2 w-full rounded-2xl border border-[#403A35]/10 bg-white px-5 py-2.5 text-xs font-black text-[#3D3732] transition hover:bg-[#F9F0E0] disabled:cursor-not-allowed disabled:opacity-50 sm:py-3"
-            >
-              🎛 Device settings
-            </button>
-
-            {waiting && (
-              <div className="mt-4 rounded-2xl bg-[#A2AB73]/10 p-4 text-center">
-                <div className="text-2xl">
-                  ⏳
-                </div>
-
-                <p className="mt-2 font-black text-[#3D3732]">
-                  Waiting for the teacher
-                </p>
-
-                <p className="mt-1 text-xs text-[#756E64]">
-                  You&apos;ll enter automatically once approved.
-                </p>
-              </div>
-            )}
-
-            {accessStatus ===
-              "denied" && (
-              <div className="mt-4 rounded-2xl bg-[#CC3A63]/10 p-4 text-center">
-                <p className="font-black text-[#CC3A63]">
-                  Request denied
-                </p>
-              </div>
-            )}
-
-            {roomFull && (
-              <div className="mt-4 rounded-xl bg-[#CC3A63]/10 p-3 text-xs font-bold text-[#CC3A63]">
-                👥 This meeting is full ({lobbyParticipantCount}/{lobbyMaxParticipants}).
-              </div>
-            )}
-
-            {error && (
-              <div className="mt-4 rounded-xl bg-[#CC3A63]/10 p-3 text-xs font-bold text-[#CC3A63]">
-                {error}
-              </div>
-            )}
-
-            {!waiting && (
-              <button
-                type="button"
-                onClick={() =>
-                  void joinMeeting()
-                }
-                disabled={
-                  requesting ||
-                  (
-                    !teacher &&
-                    (
-                      accessMode ===
-                        "locked" ||
-                      roomFull
-                    )
-                  ) ||
-                  callingState ===
-                    CallingState.JOINING
-                }
-                className="mt-3 w-full rounded-2xl bg-[#CC3A63] px-5 py-3 font-black text-white disabled:opacity-50 sm:mt-5 sm:py-3.5"
-              >
-                {requesting
-                  ? "Please wait..."
-                  : teacher
-                    ? "Join Meeting"
-                    : roomFull
-                      ? "Meeting Full"
-                      : accessMode ===
-                          "open"
-                        ? "Join Meeting"
-                        : accessMode ===
-                            "locked"
-                          ? "Meeting Locked"
-                          : accessStatus ===
-                              "denied"
-                            ? "Ask Again"
-                            : "Ask to Join"}
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() =>
-                void copyInvite()
-              }
-              className="mt-2 w-full rounded-2xl bg-[#F9F0E0] px-5 py-2.5 text-sm font-bold text-[#3D3732] sm:py-3"
-            >
-              {copied
-                ? "✓ Link copied"
-                : "Copy invite link"}
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                router.push(
-                  "/"
-                )
-              }
-              className="mt-3 w-full pb-1 text-xs font-bold text-[#756E64] sm:mt-4 sm:pb-0"
-            >
-              ← Back to dashboard
-            </button>
-
-          </div>
-
-        </section>
-
-      </div>
-
-      <MeetingDeviceSettings
-        open={
-          deviceSettingsOpen
-        }
-        onClose={() =>
-          setDeviceSettingsOpen(
-            false
-          )
-        }
-      />
-
-    </main>
-  );
-};
-
-/* =========================================================
-   LIVE MEETING
-========================================================= */
-
-const LiveMeeting = ({
-  callId,
-}: {
-  callId: string;
-}) => {
-  const router =
-    useRouter();
-
-  const call =
-    useCall();
-
-  const rtc =
-    useCohivaRtc();
-
-  const {
-    user,
-  } =
-    useUser();
-
-  const userId =
-    user?.id;
-
-  const userName =
-    user?.fullName ||
-    user?.username ||
-    user?.firstName ||
-    "Participant";
-
-  const userImage =
-    user?.imageUrl ||
-    "";
-
-  const {
-    useParticipantCount,
-    useCallCustomData,
-    useCallSettings,
-  } =
-    useCallStateHooks();
-
-  const streamParticipantCount =
-    useParticipantCount();
-
-  const callSettings =
-    useCallSettings();
-
-  const participantCount =
-    rtc.status === "joined"
-      ? rtc.participants.length
-      : streamParticipantCount;
-
-  const maxParticipants =
-    rtc.maxParticipants ||
-    callSettings?.limits
-      ?.max_participants ||
-    COHIVA_DEFAULT_PARTICIPANTS;
-
-  const custom =
-    useCallCustomData();
-
-  const teacher =
-    Boolean(
-      call?.isCreatedByMe
-    );
-
-  const storedPermissions =
-    custom?.cohiva_permissions as
-      | Partial<CohivaPermissions>
-      | undefined;
-
-  const permissions:
-    CohivaPermissions = {
-    ...DEFAULT_COHIVA_PERMISSIONS,
-    ...storedPermissions,
-    studentRecording:
-      false,
-  };
-
-  /*
-   * The self-hosted RTC server can end a room independently
-   * (for example when its duration timer expires). In that
-   * case there is no need to wait for the temporary Stream
-   * side-channel to emit call.ended before returning home.
-   */
-  useEffect(() => {
-    if (rtc.status !== "ended") {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      router.replace("/");
-    }, 900);
-
-    return () => window.clearTimeout(timer);
-  }, [router, rtc.status]);
-
-  const [
-    activeView,
-    setActiveView,
-  ] =
-    useState<MeetingView>(
-      "video"
-    );
-
-  /*
-   * Do not load Excalidraw on initial meeting entry. Once the
-   * whiteboard is opened for the first time, keep it mounted
-   * so switching back to video does not lose board state.
-   */
-  const [
-    whiteboardMounted,
-    setWhiteboardMounted,
-  ] =
-    useState(false);
-
-  useLayoutEffect(() => {
-    if (
-      activeView ===
-      "whiteboard"
-    ) {
-      setWhiteboardMounted(
-        true
-      );
-    }
-  }, [activeView]);
-
-  const [
-    copied,
-    setCopied,
-  ] =
-    useState(false);
-
-  const [
-    permissionsOpen,
-    setPermissionsOpen,
-  ] =
-    useState(false);
-
-  const [
-    participantsOpen,
-    setParticipantsOpen,
-  ] =
-    useState(false);
-
-  const [
-    chatOpen,
-    setChatOpen,
-  ] =
-    useState(false);
-
-  const [
-    attendanceOpen,
-    setAttendanceOpen,
-  ] =
-    useState(false);
-
-  const [
-    accessibilityOpen,
-    setAccessibilityOpen,
-  ] =
-    useState(false);
-
-  const [
-    deviceSettingsOpen,
-    setDeviceSettingsOpen,
-  ] =
-    useState(false);
-
-  const [
-    reactionMenuOpen,
-    setReactionMenuOpen,
-  ] =
-    useState(false);
-
-  const [
-    myHandRaised,
-    setMyHandRaised,
-  ] =
-    useState(false);
-
-  const [
-    raisedHands,
-    setRaisedHands,
-  ] =
-    useState<
-      Set<string>
-    >(
-      new Set()
-    );
-
-  const [
-    raisedHandDetails,
-    setRaisedHandDetails,
-  ] =
-    useState<
-      Map<
-        string,
-        RaisedHandInfo
-      >
-    >(
-      new Map()
-    );
-
-  const [
-    raisedHandsOpen,
-    setRaisedHandsOpen,
-  ] =
-    useState(false);
-
-  const [
-    handNotification,
-    setHandNotification,
-  ] =
-    useState<HandNotification | null>(
-      null
-    );
-
-  const handNotificationTimerRef =
-    useRef<
-      ReturnType<
-        typeof setTimeout
-      > | null
-    >(null);
-
-  const [
-    floatingReactions,
-    setFloatingReactions,
-  ] =
-    useState<
-      FloatingReaction[]
-    >(
-      []
-    );
-
-  const [
-    announcement,
-    setAnnouncement,
-  ] =
-    useState("");
-
-  const [
-    chatUnreadCount,
-    setChatUnreadCount,
-  ] =
-    useState(0);
-
-  const [
-    chatNotification,
-    setChatNotification,
-  ] =
-    useState<ChatNotification | null>(
-      null
-    );
-
-  const chatNotificationTimerRef =
-    useRef<
-      ReturnType<
-        typeof setTimeout
-      > | null
-    >(null);
-
-  const attendanceLeaveTimerRef =
-    useRef<
-      ReturnType<
-        typeof setTimeout
-      > | null
-    >(null);
-
-  const [
-    accessibility,
-    setAccessibility,
-  ] =
-    useState<AccessibilitySettings>({
-      captionsVisible:
-        false,
-      captionSize:
-        "medium",
-      highContrast:
-        false,
-      reduceMotion:
-        false,
-      hideReactions:
-        false,
-    });
-
-  /* =====================================================
-     ACCESSIBILITY STORAGE
-  ===================================================== */
-
-  useEffect(() => {
-    try {
-      const saved =
-        window.localStorage.getItem(
-          "cohiva-accessibility"
-        );
-
-      if (
-        saved
-      ) {
-        setAccessibility(
-          (
-            current
-          ) => ({
-            ...current,
-            ...JSON.parse(
-              saved
-            ),
-          })
-        );
-      }
-    } catch (
-      accessibilityError
-    ) {
-      console.error(
-        accessibilityError
-      );
-    }
+const MeetingLobby = ({ callId, room, onJoined }: { callId: string; room: RoomMetadata; onJoined: () => void }) => {
+  const router = useRouter();
+  const { user } = useUser();
+  const [accessMode, setAccessMode] = useState<MeetingAccessMode>(room.accessMode || "approval");
+  const [accessStatus, setAccessStatus] = useState<AccessStatus>("idle");
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [microphoneOn, setMicrophoneOn] = useState(false);
+  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
+  const [microphoneDevices, setMicrophoneDevices] = useState<MediaDeviceInfo[]>([]);
+  const [speakerDevices, setSpeakerDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCamera, setSelectedCamera] = useState("");
+  const [selectedMicrophone, setSelectedMicrophone] = useState("");
+  const [selectedSpeaker, setSelectedSpeaker] = useState("");
+  const previewRef = useRef<HTMLVideoElement | null>(null);
+  const previewStreamRef = useRef<MediaStream | null>(null);
+  const joiningRef = useRef(false);
+  const mediaAvailable = typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+
+  const stopPreview = useCallback(() => {
+    previewStreamRef.current?.getTracks().forEach((track) => track.stop());
+    previewStreamRef.current = null;
+    if (previewRef.current) previewRef.current.srcObject = null;
+    setCameraOn(false);
   }, []);
 
-  useEffect(() => {
+  const refreshDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
     try {
-      window.localStorage.setItem(
-        "cohiva-accessibility",
-        JSON.stringify(
-          accessibility
-        )
-      );
-    } catch (
-      accessibilityError
-    ) {
-      console.error(
-        accessibilityError
-      );
-    }
-  }, [
-    accessibility,
-  ]);
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cameras = devices.filter((item) => item.kind === "videoinput");
+      const microphones = devices.filter((item) => item.kind === "audioinput");
+      const speakers = devices.filter((item) => item.kind === "audiooutput");
+      setCameraDevices(cameras); setMicrophoneDevices(microphones); setSpeakerDevices(speakers);
+      if (!selectedCamera && cameras[0]) setSelectedCamera(cameras[0].deviceId);
+      if (!selectedMicrophone && microphones[0]) setSelectedMicrophone(microphones[0].deviceId);
+      if (!selectedSpeaker && speakers[0]) setSelectedSpeaker(speakers[0].deviceId);
+    } catch {}
+  }, [selectedCamera, selectedMicrophone, selectedSpeaker]);
 
-  /* =====================================================
-     ATTENDANCE
-  ===================================================== */
+  useEffect(() => { void refreshDevices(); return stopPreview; }, [refreshDevices, stopPreview]);
+
+  const toggleCamera = async () => {
+    if (!mediaAvailable) { setError("Camera access is not supported on this device/browser origin."); return; }
+    if (cameraOn) { stopPreview(); return; }
+    try {
+      setError("");
+      stopPreview();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: selectedCamera ? { deviceId: { exact: selectedCamera }, width: { ideal: 1280 }, height: { ideal: 720 } } : true,
+        audio: false,
+      });
+      previewStreamRef.current = stream;
+      if (previewRef.current) { previewRef.current.srcObject = stream; await previewRef.current.play().catch(() => {}); }
+      setCameraOn(true);
+      await refreshDevices();
+    } catch (cameraError) {
+      setError(cameraError instanceof Error ? cameraError.message : "Cohiva could not access your camera.");
+    }
+  };
+
+  const toggleMicrophone = async () => {
+    if (!mediaAvailable) { setError("Microphone access is not supported on this device/browser origin."); return; }
+    if (microphoneOn) { setMicrophoneOn(false); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: selectedMicrophone ? { deviceId: { exact: selectedMicrophone } } : true, video: false });
+      stream.getTracks().forEach((track) => track.stop());
+      setMicrophoneOn(true);
+      await refreshDevices();
+    } catch (micError) {
+      setError(micError instanceof Error ? micError.message : "Cohiva could not access your microphone.");
+    }
+  };
+
+  const loadAccess = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/meetings/access?callId=${encodeURIComponent(callId)}`, { cache: "no-store" });
+      const result = await response.json();
+      if (response.ok) setAccessMode(result.mode === "open" || result.mode === "locked" ? result.mode : "approval");
+    } catch {}
+  }, [callId]);
+
+  useSmartPolling(loadAccess, { enabled: !room.teacher, intervalMs: 2500 });
+
+  const finishJoin = useCallback(async () => {
+    if (joiningRef.current) return;
+    joiningRef.current = true;
+    try {
+      const membership = await fetch("/api/meetings/member", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId }),
+      });
+      const membershipResult = await membership.json().catch(() => null);
+      if (!membership.ok) throw new Error(membershipResult?.error || "Unable to enter the meeting.");
+      window.sessionStorage.setItem(`cohiva-rtc-prejoin:${callId}`, JSON.stringify({
+        microphone: microphoneOn,
+        camera: cameraOn,
+        audioDeviceId: selectedMicrophone,
+        videoDeviceId: selectedCamera,
+        audioOutputDeviceId: selectedSpeaker,
+      }));
+      stopPreview();
+      setAccessStatus("approved");
+      onJoined();
+    } catch (joinError) {
+      joiningRef.current = false;
+      setAccessStatus("idle");
+      setError(joinError instanceof Error ? joinError.message : "Unable to enter the meeting.");
+    }
+  }, [callId, cameraOn, microphoneOn, onJoined, selectedCamera, selectedMicrophone, selectedSpeaker, stopPreview]);
+
+  const checkWaitingStatus = useCallback(async () => {
+    if (accessStatus !== "waiting") return;
+    try {
+      const response = await fetch(`/api/meetings/join-request?callId=${encodeURIComponent(callId)}&scope=mine`, { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok) return;
+      if (result.status === "approved") await finishJoin();
+      if (result.status === "denied") { setAccessStatus("denied"); setError("The host did not approve this join request."); }
+    } catch {}
+  }, [accessStatus, callId, finishJoin]);
+
+  useSmartPolling(checkWaitingStatus, { enabled: accessStatus === "waiting", intervalMs: 1200 });
 
   useEffect(() => {
-    if (
-      !userId
-    ) {
-      return;
+    if (accessStatus === "waiting" && accessMode === "open") {
+      void finishJoin();
     }
-
-    if (
-      attendanceLeaveTimerRef.current
-    ) {
-      clearTimeout(
-        attendanceLeaveTimerRef.current
-      );
-
-      attendanceLeaveTimerRef.current =
-        null;
+    if (accessStatus === "waiting" && accessMode === "locked") {
+      setAccessStatus("idle");
+      setError("The host locked this meeting.");
     }
+  }, [accessMode, accessStatus, finishJoin]);
 
-    let pageLeaveSent =
-      false;
-
-    const payloadBase = {
-      callId,
-      name:
-        userName,
-      image:
-        userImage,
-    };
-
-    const postAttendance =
-      (
-        action:
-          | "join"
-          | "leave"
-          | "heartbeat",
-        keepalive =
-          false
-      ) =>
-        fetch(
-          "/api/meetings/attendance",
-          {
-            method:
-              "POST",
-
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-
-            body:
-              JSON.stringify({
-                ...payloadBase,
-                action,
-              }),
-
-            keepalive,
-          }
-        );
-
-    void postAttendance(
-      "join"
-    ).catch(
-      console.error
-    );
-
-    const heartbeatTimer =
-      window.setInterval(
-        () => {
-          void postAttendance(
-            "heartbeat"
-          ).catch(
-            console.error
-          );
-        },
-        20_000
-      );
-
-    const handlePageHide =
-      () => {
-        if (
-          pageLeaveSent
-        ) {
-          return;
-        }
-
-        pageLeaveSent =
-          true;
-
-        void postAttendance(
-          "leave",
-          true
-        ).catch(
-          () => {}
-        );
-      };
-
-    window.addEventListener(
-      "pagehide",
-      handlePageHide
-    );
-
-    return () => {
-      window.clearInterval(
-        heartbeatTimer
-      );
-
-      window.removeEventListener(
-        "pagehide",
-        handlePageHide
-      );
-
-      attendanceLeaveTimerRef.current =
-        setTimeout(
-          () => {
-            if (
-              pageLeaveSent
-            ) {
-              return;
-            }
-
-            void postAttendance(
-              "leave",
-              true
-            ).catch(
-              console.error
-            );
-          },
-          2500
-        );
-    };
-  }, [
-    callId,
-    userId,
-    userName,
-    userImage,
-  ]);
-
-  /* =====================================================
-     CLASSROOM EVENTS
-  ===================================================== */
-
-  const sendClassroomEvent =
-    useCallback(
-      async (
-        body:
-          Record<
-            string,
-            unknown
-          >
-      ) => {
-        const response =
-          await fetch(
-            "/api/meetings/classroom-event",
-            {
-              method:
-                "POST",
-
-              headers: {
-                "Content-Type":
-                  "application/json",
-              },
-
-              body:
-                JSON.stringify({
-                  callId,
-                  senderName:
-                    userName,
-                  senderImage:
-                    userImage,
-                  ...body,
-                }),
-            }
-          );
-
-        const result =
-          await response
-            .json()
-            .catch(
-              () =>
-                null
-            );
-
-        if (
-          !response.ok
-        ) {
-          throw new Error(
-            result?.error ||
-              "Unable to send classroom event."
-          );
-        }
-      },
-      [
-        callId,
-        userName,
-        userImage,
-      ]
-    );
-
-  /* =====================================================
-     HAND + REACTION
-  ===================================================== */
-
-  useEffect(() => {
-    if (
-      !call
-    ) {
-      return;
+  const joinMeeting = async () => {
+    if (!user || joiningRef.current) return;
+    setError("");
+    if (room.teacher || accessMode === "open") { await finishJoin(); return; }
+    if (accessMode === "locked") { setError("This meeting is currently locked by the host."); return; }
+    try {
+      setAccessStatus("requesting");
+      const response = await fetch("/api/meetings/join-request", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callId, action: "request", name: user.fullName || user.username || user.firstName || "Participant", image: user.imageUrl || "" }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to send join request.");
+      if (result.status === "approved" || result.status === "open") { await finishJoin(); return; }
+      setAccessStatus("waiting");
+    } catch (requestError) {
+      setAccessStatus("idle");
+      setError(requestError instanceof Error ? requestError.message : "Unable to send join request.");
     }
-
-    const unsubscribe =
-      call.on(
-        "custom",
-        (
-          event:
-            StreamVideoEvent
-        ) => {
-          const payload =
-            (
-              event as
-                CustomVideoEvent
-            ).custom as
-              Record<
-                string,
-                unknown
-              >;
-
-          if (
-            payload.type !==
-            "cohiva-classroom"
-          ) {
-            return;
-          }
-
-          const senderId =
-            typeof payload.senderId ===
-            "string"
-              ? payload.senderId
-              : "";
-
-          if (
-            !senderId
-          ) {
-            return;
-          }
-
-          const senderName =
-            typeof payload.senderName ===
-            "string"
-              ? payload.senderName
-              : "Participant";
-
-          const senderImage =
-            typeof payload.senderImage ===
-            "string"
-              ? payload.senderImage
-              : "";
-
-          if (
-            payload.action ===
-            "hand"
-          ) {
-            const raised =
-              payload.raised ===
-              true;
-
-            setRaisedHands(
-              (
-                current
-              ) => {
-                const next =
-                  new Set(
-                    current
-                  );
-
-                if (
-                  raised
-                ) {
-                  next.add(
-                    senderId
-                  );
-                } else {
-                  next.delete(
-                    senderId
-                  );
-                }
-
-                return next;
-              }
-            );
-
-            setRaisedHandDetails(
-              (
-                current
-              ) => {
-                const next =
-                  new Map(
-                    current
-                  );
-
-                if (
-                  raised
-                ) {
-                  next.set(
-                    senderId,
-                    {
-                      userId:
-                        senderId,
-                      name:
-                        senderName,
-                      image:
-                        senderImage,
-                      raisedAt:
-                        typeof payload.createdAt ===
-                        "string"
-                          ? payload.createdAt
-                          : new Date()
-                              .toISOString(),
-                    }
-                  );
-                } else {
-                  next.delete(
-                    senderId
-                  );
-                }
-
-                return next;
-              }
-            );
-
-            if (
-              senderId ===
-              userId
-            ) {
-              setMyHandRaised(
-                raised
-              );
-            }
-
-            setAnnouncement(
-              raised
-                ? `${senderName} raised their hand`
-                : `${senderName} lowered their hand`
-            );
-
-            if (
-              teacher &&
-              senderId !==
-                userId &&
-              raised
-            ) {
-              setHandNotification({
-                userId:
-                  senderId,
-                name:
-                  senderName,
-                image:
-                  senderImage,
-              });
-
-              if (
-                handNotificationTimerRef.current
-              ) {
-                clearTimeout(
-                  handNotificationTimerRef.current
-                );
-              }
-
-              handNotificationTimerRef.current =
-                setTimeout(
-                  () => {
-                    setHandNotification(
-                      null
-                    );
-                  },
-                  4500
-                );
-            }
-
-            return;
-          }
-
-          if (
-            payload.action ===
-              "reaction" &&
-            typeof payload.emoji ===
-              "string"
-          ) {
-            const reaction:
-              FloatingReaction = {
-              id:
-                typeof payload.eventId ===
-                "string"
-                  ? payload.eventId
-                  : crypto.randomUUID(),
-              emoji:
-                payload.emoji,
-              name:
-                senderName,
-            };
-
-            setFloatingReactions(
-              (
-                current
-              ) => [
-                ...current.slice(
-                  -5
-                ),
-                reaction,
-              ]
-            );
-
-            setAnnouncement(
-              `${senderName} reacted ${reaction.emoji}`
-            );
-
-            window.setTimeout(
-              () => {
-                setFloatingReactions(
-                  (
-                    current
-                  ) =>
-                    current.filter(
-                      (
-                        item
-                      ) =>
-                        item.id !==
-                        reaction.id
-                    )
-                );
-              },
-              3000
-            );
-          }
-        }
-      );
-
-    return () => {
-      unsubscribe();
-    };
-  }, [
-    call,
-    teacher,
-    userId,
-  ]);
-
-  /* =====================================================
-     CHAT
-  ===================================================== */
-
-  useEffect(() => {
-    if (
-      !call
-    ) {
-      return;
-    }
-
-    const unsubscribe =
-      call.on(
-        "custom",
-        (
-          event:
-            StreamVideoEvent
-        ) => {
-          const payload =
-            (
-              event as
-                CustomVideoEvent
-            ).custom as
-              Record<
-                string,
-                unknown
-              >;
-
-          if (
-            payload.type !==
-            "cohiva-chat"
-          ) {
-            return;
-          }
-
-          const senderId =
-            typeof payload.senderId ===
-            "string"
-              ? payload.senderId
-              : "";
-
-          if (
-            !senderId ||
-            senderId ===
-              userId ||
-            chatOpen
-          ) {
-            return;
-          }
-
-          setChatUnreadCount(
-            (
-              current
-            ) =>
-              Math.min(
-                current + 1,
-                99
-              )
-          );
-
-          setChatNotification({
-            senderId,
-            senderName:
-              typeof payload.senderName ===
-              "string"
-                ? payload.senderName
-                : "Participant",
-            senderImage:
-              typeof payload.senderImage ===
-              "string"
-                ? payload.senderImage
-                : "",
-            text:
-              typeof payload.text ===
-              "string"
-                ? payload.text
-                : "New message",
-          });
-        }
-      );
-
-    return () => {
-      unsubscribe();
-    };
-  }, [
-    call,
-    userId,
-    chatOpen,
-  ]);
-
-  useEffect(() => {
-    if (
-      !chatOpen
-    ) {
-      return;
-    }
-
-    setChatUnreadCount(
-      0
-    );
-
-    setChatNotification(
-      null
-    );
-  }, [
-    chatOpen,
-  ]);
-
-  /* =====================================================
-     PARTICIPANT LEFT
-  ===================================================== */
-
-  useEffect(() => {
-    if (
-      !call
-    ) {
-      return;
-    }
-
-    const unsubscribe =
-      call.on(
-        "call.session_participant_left",
-        (
-          event
-        ) => {
-          const participant =
-            event.participant as
-              any;
-
-          const leavingId =
-            participant?.user?.id ??
-            participant?.user_id;
-
-          if (
-            typeof leavingId !==
-            "string"
-          ) {
-            return;
-          }
-
-          setRaisedHands(
-            (
-              current
-            ) => {
-              const next =
-                new Set(
-                  current
-                );
-
-              next.delete(
-                leavingId
-              );
-
-              return next;
-            }
-          );
-
-          setRaisedHandDetails(
-            (
-              current
-            ) => {
-              const next =
-                new Map(
-                  current
-                );
-
-              next.delete(
-                leavingId
-              );
-
-              return next;
-            }
-          );
-        }
-      );
-
-    return () => {
-      unsubscribe();
-    };
-  }, [
-    call,
-  ]);
-
-  /* =====================================================
-     ★ END CALL FOR EVERYONE
-
-     Teacher executes:
-       call.endCall()
-
-     Stream then emits:
-       call.ended
-
-     to every connected client.
-
-     EVERYONE redirects home.
-
-     DO NOT use call.session_ended here.
-  ===================================================== */
-
-  useEffect(() => {
-    if (
-      !call
-    ) {
-      return;
-    }
-
-    let alreadyHandled =
-      false;
-
-    const handleCallEnded =
-      () => {
-        if (
-          alreadyHandled
-        ) {
-          return;
-        }
-
-        alreadyHandled =
-          true;
-
-        /*
-         * Clear temporary meeting state before routing.
-         */
-
-        setChatNotification(
-          null
-        );
-
-        setHandNotification(
-          null
-        );
-
-        setFloatingReactions(
-          []
-        );
-
-        setChatOpen(
-          false
-        );
-
-        setParticipantsOpen(
-          false
-        );
-
-        setPermissionsOpen(
-          false
-        );
-
-        setAttendanceOpen(
-          false
-        );
-
-        setAccessibilityOpen(
-          false
-        );
-
-        setDeviceSettingsOpen(
-          false
-        );
-
-        setReactionMenuOpen(
-          false
-        );
-
-        setRaisedHandsOpen(
-          false
-        );
-
-        /*
-         * Teacher + every participant go home.
-         */
-
-        router.replace(
-          "/"
-        );
-      };
-
-    const unsubscribe =
-      call.on(
-        "call.ended",
-        handleCallEnded
-      );
-
-    return () => {
-      unsubscribe();
-    };
-  }, [
-    call,
-    router,
-  ]);
-
-  /* =====================================================
-     TOGGLE HAND
-  ===================================================== */
-
-  const toggleHand =
-    useCallback(
-      async () => {
-        const next =
-          !myHandRaised;
-
-        setMyHandRaised(
-          next
-        );
-
-        try {
-          await sendClassroomEvent({
-            action:
-              "hand",
-            raised:
-              next,
-          });
-        } catch (
-          error
-        ) {
-          console.error(
-            error
-          );
-
-          setMyHandRaised(
-            !next
-          );
-        }
-      },
-      [
-        myHandRaised,
-        sendClassroomEvent,
-      ]
-    );
-
-  const sendReaction =
-    async (
-      emoji: string
-    ) => {
-      setReactionMenuOpen(
-        false
-      );
-
-      try {
-        await sendClassroomEvent({
-          action:
-            "reaction",
-          emoji,
-        });
-      } catch (
-        error
-      ) {
-        console.error(
-          error
-        );
-      }
-    };
-
-  /* =====================================================
-     SHORTCUTS
-  ===================================================== */
-
-  useEffect(() => {
-    if (
-      !call
-    ) {
-      return;
-    }
-
-    const onKeyDown =
-      (
-        event:
-          KeyboardEvent
-      ) => {
-        const target =
-          event.target as
-            HTMLElement | null;
-
-        if (
-          target?.tagName ===
-            "INPUT" ||
-          target?.tagName ===
-            "TEXTAREA" ||
-          target?.isContentEditable ||
-          !event.altKey
-        ) {
-          return;
-        }
-
-        const key =
-          event.key.toLowerCase();
-
-        if (
-          key ===
-          "m"
-        ) {
-          event.preventDefault();
-
-          void rtc.toggleMicrophone();
-        }
-
-        if (
-          key ===
-          "v"
-        ) {
-          event.preventDefault();
-
-          void rtc.toggleCamera();
-        }
-
-        if (
-          key ===
-          "c"
-        ) {
-          event.preventDefault();
-
-          setChatOpen(
-            (
-              current
-            ) =>
-              !current
-          );
-        }
-
-        if (
-          key ===
-          "p"
-        ) {
-          event.preventDefault();
-
-          setParticipantsOpen(
-            (
-              current
-            ) =>
-              !current
-          );
-        }
-
-        if (
-          key ===
-          "h"
-        ) {
-          event.preventDefault();
-
-          void toggleHand();
-        }
-
-        if (
-          key ===
-          "w"
-        ) {
-          event.preventDefault();
-
-          setActiveView(
-            (
-              current
-            ) =>
-              current ===
-                "video"
-                ? "whiteboard"
-                : "video"
-          );
-        }
-
-        if (
-          key ===
-          "a"
-        ) {
-          event.preventDefault();
-
-          setAccessibilityOpen(
-            (
-              current
-            ) =>
-              !current
-          );
-        }
-
-        if (
-          key ===
-          "d"
-        ) {
-          event.preventDefault();
-
-          setDeviceSettingsOpen(
-            (
-              current
-            ) =>
-              !current
-          );
-        }
-      };
-
-    window.addEventListener(
-      "keydown",
-      onKeyDown
-    );
-
-    return () => {
-      window.removeEventListener(
-        "keydown",
-        onKeyDown
-      );
-    };
-  }, [
-    call,
-    rtc,
-    toggleHand,
-  ]);
-
-  const copyInvite =
-    async () => {
-      try {
-        await navigator.clipboard.writeText(
-          `${window.location.origin}/meeting/${callId}`
-        );
-
-        setCopied(
-          true
-        );
-
-        window.setTimeout(
-          () =>
-            setCopied(
-              false
-            ),
-          1800
-        );
-      } catch (
-        error
-      ) {
-        console.error(
-          error
-        );
-      }
-    };
-
-  const handList =
-    Array.from(
-      raisedHandDetails.values()
-    ).sort(
-      (
-        a,
-        b
-      ) =>
-        new Date(
-          a.raisedAt
-        ).getTime() -
-        new Date(
-          b.raisedAt
-        ).getTime()
-    );
+  };
+
+  const copyInvite = async () => {
+    try { await navigator.clipboard.writeText(`${window.location.origin}/meeting/${callId}`); setCopied(true); window.setTimeout(() => setCopied(false), 1800); } catch { setError("Unable to copy meeting link."); }
+  };
 
   return (
-    <main
-      className={`cohiva-meeting-root flex h-dvh w-full flex-col overflow-hidden bg-[#24211F] text-white ${
-        accessibility.highContrast
-          ? "contrast-125"
-          : ""
-      }`}
-    >
+    <main className="flex min-h-dvh w-full items-center justify-center bg-[#F9F0E0] p-3 sm:p-6">
+      <div className="grid w-full max-w-[1450px] overflow-hidden rounded-[30px] bg-[#FFF7EB] shadow-[0_30px_90px_rgba(61,55,50,0.16)] lg:min-h-[720px] lg:grid-cols-[1.15fr_0.9fr]">
+        <section className="relative min-h-[300px] overflow-hidden bg-[#302B27] lg:min-h-0">
+          <div className="absolute left-5 top-5 z-30 rounded-full bg-[#CC3A63] px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-white">Cohiva Preview</div>
+          <video ref={previewRef} muted playsInline className={`h-full w-full object-cover ${cameraOn ? "block" : "hidden"}`} />
+          {!cameraOn && <div className="absolute inset-0 flex items-center justify-center text-center text-white"><div><div className="text-5xl">📷</div><p className="mt-4 text-xl font-black">Camera is off</p></div></div>}
+        </section>
+        <section className="overflow-y-auto p-5 sm:p-8">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#A2AB73]">Ready to meet?</p>
+          <h1 className="mt-2 text-3xl font-black text-[#3D3732]">{room.teacher ? "Start your classroom ✨" : "Join the classroom ✨"}</h1>
+          <p className="mt-2 text-sm text-[#756E64]">{room.title || "Cohiva Meeting"}</p>
 
-      {accessibility.reduceMotion && (
-        <style>
-          {`
-            .cohiva-meeting-root *,
-            .cohiva-meeting-root *::before,
-            .cohiva-meeting-root *::after {
-              animation-duration: 0.001ms !important;
-              animation-iteration-count: 1 !important;
-              transition-duration: 0.001ms !important;
-            }
-          `}
-        </style>
-      )}
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <button type="button" onClick={() => void toggleMicrophone()} className={`rounded-2xl p-4 font-black ${microphoneOn ? "bg-[#A2AB73] text-white" : "bg-[#403A35]/10 text-[#3D3732]"}`}>🎙 {microphoneOn ? "Mic on" : "Mic off"}</button>
+            <button type="button" onClick={() => void toggleCamera()} className={`rounded-2xl p-4 font-black ${cameraOn ? "bg-[#A2AB73] text-white" : "bg-[#403A35]/10 text-[#3D3732]"}`}>📷 {cameraOn ? "Camera on" : "Camera off"}</button>
+          </div>
 
-      <div
-        className="sr-only"
-        aria-live="polite"
-      >
-        {announcement}
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <select value={selectedMicrophone} onChange={(event) => setSelectedMicrophone(event.target.value)} className="rounded-xl border border-[#403A35]/10 bg-white p-3 text-xs"><option value="">Default microphone</option>{microphoneDevices.map((device, index) => <option key={device.deviceId || index} value={device.deviceId}>{device.label || `Microphone ${index + 1}`}</option>)}</select>
+            <select value={selectedCamera} onChange={(event) => { setSelectedCamera(event.target.value); if (cameraOn) void toggleCamera().then(() => toggleCamera()); }} className="rounded-xl border border-[#403A35]/10 bg-white p-3 text-xs"><option value="">Default camera</option>{cameraDevices.map((device, index) => <option key={device.deviceId || index} value={device.deviceId}>{device.label || `Camera ${index + 1}`}</option>)}</select>
+            <select value={selectedSpeaker} onChange={(event) => setSelectedSpeaker(event.target.value)} className="rounded-xl border border-[#403A35]/10 bg-white p-3 text-xs"><option value="">Default speaker</option>{speakerDevices.map((device, index) => <option key={device.deviceId || index} value={device.deviceId}>{device.label || `Speaker ${index + 1}`}</option>)}</select>
+          </div>
+
+          {room.teacher && <div className="mt-5 space-y-4"><MeetingAccessSettings callId={callId} /><MeetingLimitsSettings callId={callId} compact /></div>}
+
+          {accessStatus === "waiting" && <div className="mt-5 rounded-2xl bg-[#A2AB73]/15 p-4 text-sm font-bold text-[#66703F]">Waiting for the host to approve your request…</div>}
+          {error && <div className="mt-5 rounded-2xl bg-[#CC3A63]/10 p-4 text-sm font-bold text-[#CC3A63]">{error}</div>}
+
+          <button type="button" disabled={accessStatus === "requesting" || accessStatus === "waiting"} onClick={() => void joinMeeting()} className="mt-6 w-full rounded-2xl bg-[#CC3A63] px-5 py-4 font-black text-white disabled:opacity-50">
+            {accessStatus === "requesting" ? "Requesting…" : accessStatus === "waiting" ? "Waiting for approval" : room.teacher ? "Start meeting" : accessMode === "approval" ? "Ask to join" : "Join meeting"}
+          </button>
+          <div className="mt-3 grid grid-cols-2 gap-3"><button type="button" onClick={() => void copyInvite()} className="rounded-2xl bg-[#403A35]/10 p-3 text-xs font-black">{copied ? "Copied ✓" : "Copy invite"}</button><button type="button" onClick={() => router.replace("/")} className="rounded-2xl bg-[#403A35]/10 p-3 text-xs font-black">Back home</button></div>
+        </section>
       </div>
+    </main>
+  );
+};
 
-      {/* =================================================
-          HEADER
-      ================================================= */}
+const LiveMeeting = ({ callId, initialPermissions }: { callId: string; initialPermissions?: Partial<CohivaPermissions> }) => {
+  const router = useRouter();
+  const rtc = useCohivaRtc();
+  const { user } = useUser();
+  const userId = user?.id || "";
+  const userName = user?.fullName || user?.username || user?.firstName || "Participant";
+  const userImage = user?.imageUrl || "";
+  const teacher = rtc.selfRole === "host";
+  const [permissions, setPermissions] = useState<CohivaPermissions>({ ...DEFAULT_COHIVA_PERMISSIONS, ...initialPermissions, studentRecording: false });
+  const [activeView, setActiveView] = useState<MeetingView>("video");
+  const [whiteboardMounted, setWhiteboardMounted] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [participantsOpen, setParticipantsOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [attendanceOpen, setAttendanceOpen] = useState(false);
+  const [accessibilityOpen, setAccessibilityOpen] = useState(false);
+  const [deviceSettingsOpen, setDeviceSettingsOpen] = useState(false);
+  const [reactionMenuOpen, setReactionMenuOpen] = useState(false);
+  const [myHandRaised, setMyHandRaised] = useState(false);
+  const [raisedHands, setRaisedHands] = useState<Set<string>>(new Set());
+  const [raisedHandDetails, setRaisedHandDetails] = useState<Map<string, RaisedHandInfo>>(new Map());
+  const [raisedHandsOpen, setRaisedHandsOpen] = useState(false);
+  const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
+  const [chatNotification, setChatNotification] = useState<ChatNotification | null>(null);
+  const [accessibility, setAccessibility] = useState<AccessibilitySettings>({ captionsVisible: false, captionSize: "medium", highContrast: false, reduceMotion: false, hideReactions: false });
 
-      <header className="cohiva-hide-scrollbar flex h-[64px] shrink-0 items-center justify-between gap-2 overflow-x-auto border-b border-white/10 bg-[#302B27] px-2 sm:px-3 lg:px-5">
+  useLayoutEffect(() => { if (activeView === "whiteboard") setWhiteboardMounted(true); }, [activeView]);
 
-        <div className="flex min-w-0 items-center gap-2">
+  useEffect(() => {
+    if (rtc.status !== "ended") return;
 
-          <p className="hidden truncate text-base font-black md:block">
-            Cohiva Meeting
-          </p>
+    if (teacher) {
+      void fetch("/api/meetings/end", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callId }),
+        keepalive: true,
+      }).catch(() => {});
+    }
 
-          {teacher && (
-            <span className="hidden rounded-full bg-[#CC3A63]/20 px-2 py-1 text-[8px] font-black uppercase text-[#F58BA8] xl:inline">
-              Teacher
-            </span>
-          )}
+    const timer = window.setTimeout(() => router.replace("/"), 700);
+    return () => window.clearTimeout(timer);
+  }, [callId, router, rtc.status, teacher]);
 
-          <button
-            type="button"
-            onClick={() =>
-              setParticipantsOpen(
-                true
-              )
-            }
-            className="rounded-lg bg-white/10 px-3 py-2 text-xs font-black"
-          >
-            👥 {participantCount}/{maxParticipants}
-          </button>
+  useEffect(() => {
+    try { const saved = window.localStorage.getItem("cohiva-accessibility"); if (saved) setAccessibility((current) => ({ ...current, ...JSON.parse(saved) })); } catch {}
+  }, []);
+  useEffect(() => { try { window.localStorage.setItem("cohiva-accessibility", JSON.stringify(accessibility)); } catch {} }, [accessibility]);
 
-          <MeetingSessionTimer />
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const response = await fetch(`/api/meetings/permissions?callId=${encodeURIComponent(callId)}`, { cache: "no-store" });
+        const result = await response.json();
+        if (response.ok && active) setPermissions({ ...DEFAULT_COHIVA_PERMISSIONS, ...(result.permissions || {}), studentRecording: false });
+      } catch {}
+    };
+    void load();
+    return () => { active = false; };
+  }, [callId]);
 
-          {teacher &&
-            raisedHands.size >
-              0 && (
-              <button
-                type="button"
-                onClick={() =>
-                  setRaisedHandsOpen(
-                    (
-                      current
-                    ) =>
-                      !current
-                  )
-                }
-                className="rounded-lg bg-[#FACC15] px-3 py-2 text-xs font-black text-[#403A35]"
-              >
-                ✋ {raisedHands.size}
-              </button>
-            )}
+  useEffect(() => rtc.subscribeEvent("call.updated", (data) => {
+    const next = data?.call?.custom?.cohiva_permissions;
+    if (next && typeof next === "object") setPermissions({ ...DEFAULT_COHIVA_PERMISSIONS, ...next, studentRecording: false });
+  }), [rtc]);
 
-          <div className="flex rounded-xl bg-black/20 p-1">
+  useEffect(() => {
+    if (!userId) return;
+    const payload = { callId, name: userName, image: userImage };
+    const post = (action: "join" | "leave" | "heartbeat", keepalive = false) => fetch("/api/meetings/attendance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, action }), keepalive });
+    void post("join").catch(() => {});
+    const heartbeat = window.setInterval(() => void post("heartbeat").catch(() => {}), 20_000);
+    const pageHide = () => void post("leave", true).catch(() => {});
+    window.addEventListener("pagehide", pageHide);
+    return () => { window.clearInterval(heartbeat); window.removeEventListener("pagehide", pageHide); void post("leave", true).catch(() => {}); };
+  }, [callId, userId, userImage, userName]);
 
-            <button
-              type="button"
-              onClick={() =>
-                setActiveView(
-                  "video"
-                )
-              }
-              className={`rounded-lg px-2 py-1.5 text-xs font-black sm:px-3 ${
-                activeView ===
-                "video"
-                  ? "bg-[#FFF7EB] text-[#403A35]"
-                  : "text-white/60"
-              }`}
-            >
-              🎥 <span className="hidden sm:inline">Video</span>
-            </button>
+  const sendClassroomEvent = useCallback(async (payload: Record<string, unknown>) => {
+    const response = await fetch("/api/meetings/classroom-event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId, senderName: userName, senderImage: userImage, ...payload }) });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(result?.error || "Unable to send classroom event.");
+  }, [callId, userImage, userName]);
 
-            <button
-              type="button"
-              onClick={() =>
-                setActiveView(
-                  "whiteboard"
-                )
-              }
-              className={`rounded-lg px-2 py-1.5 text-xs font-black sm:px-3 ${
-                activeView ===
-                "whiteboard"
-                  ? "bg-[#A2AB73]"
-                  : "text-white/60"
-              }`}
-            >
-              ✏ <span className="hidden sm:inline">Board</span>
-            </button>
+  useEffect(() => rtc.subscribeEvent("custom", (data) => {
+    const payload = data.custom as Record<string, any> | undefined;
+    if (!payload) return;
+    if (payload.type === "cohiva-classroom") {
+      if (payload.action === "hand") {
+        const senderId = typeof payload.senderId === "string" ? payload.senderId : "";
+        if (!senderId) return;
+        const raised = payload.raised === true;
+        setRaisedHands((current) => { const next = new Set(current); raised ? next.add(senderId) : next.delete(senderId); return next; });
+        setRaisedHandDetails((current) => { const next = new Map(current); if (raised) next.set(senderId, { userId: senderId, name: typeof payload.senderName === "string" ? payload.senderName : "Participant", image: typeof payload.senderImage === "string" ? payload.senderImage : "", raisedAt: typeof payload.createdAt === "string" ? payload.createdAt : new Date().toISOString() }); else next.delete(senderId); return next; });
+      }
+      if (payload.action === "reaction" && typeof payload.emoji === "string") {
+        const reaction = { id: typeof payload.eventId === "string" ? payload.eventId : `${Date.now()}-${Math.random()}`, emoji: payload.emoji, name: typeof payload.senderName === "string" ? payload.senderName : "Participant" };
+        setFloatingReactions((current) => [...current.slice(-4), reaction]);
+        window.setTimeout(() => setFloatingReactions((current) => current.filter((item) => item.id !== reaction.id)), 3000);
+      }
+    }
+    if (payload.type === "cohiva-chat") {
+      const senderId = typeof payload.senderId === "string" ? payload.senderId : "";
+      if (!senderId || senderId === userId || chatOpen) return;
+      setChatUnreadCount((current) => Math.min(current + 1, 99));
+      setChatNotification({ senderId, senderName: typeof payload.senderName === "string" ? payload.senderName : "Participant", senderImage: typeof payload.senderImage === "string" ? payload.senderImage : "", text: typeof payload.text === "string" ? payload.text : "New message" });
+    }
+  }), [chatOpen, rtc, userId]);
 
-          </div>
+  useEffect(() => { if (chatOpen) { setChatUnreadCount(0); setChatNotification(null); } }, [chatOpen]);
+  useEffect(() => rtc.subscribeEvent("participant-left", (data) => {
+    const leavingId = typeof data.userId === "string" ? data.userId : "";
+    if (!leavingId) return;
+    setRaisedHands((current) => { const next = new Set(current); next.delete(leavingId); return next; });
+    setRaisedHandDetails((current) => { const next = new Map(current); next.delete(leavingId); return next; });
+  }), [rtc]);
 
-        </div>
+  const toggleHand = async () => {
+    const next = !myHandRaised; setMyHandRaised(next);
+    try { await sendClassroomEvent({ action: "hand", raised: next }); } catch { setMyHandRaised(!next); }
+  };
+  const sendReaction = async (emoji: string) => { setReactionMenuOpen(false); try { await sendClassroomEvent({ action: "reaction", emoji }); } catch {} };
 
-        <div className="flex shrink-0 items-center gap-1.5">
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable || !event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "m") { event.preventDefault(); void rtc.toggleMicrophone(); }
+      if (key === "v") { event.preventDefault(); void rtc.toggleCamera(); }
+      if (key === "c") { event.preventDefault(); setChatOpen((current) => !current); }
+      if (key === "h") { event.preventDefault(); void toggleHand(); }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
 
-          <button
-            type="button"
-            onClick={() =>
-              setChatOpen(
-                true
-              )
-            }
-            className="relative rounded-lg bg-white/10 px-3 py-2 text-xs"
-          >
-            💬
+  const copyInvite = async () => { try { await navigator.clipboard.writeText(`${window.location.origin}/meeting/${callId}`); setCopied(true); window.setTimeout(() => setCopied(false), 1800); } catch {} };
 
-            {chatUnreadCount >
-              0 && (
-              <span className="absolute -right-2 -top-2 rounded-full bg-[#CC3A63] px-1.5 text-[8px] font-black">
-                {chatUnreadCount}
-              </span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={() =>
-              void toggleHand()
-            }
-            className={`rounded-lg px-3 py-2 text-xs ${
-              myHandRaised
-                ? "bg-[#FACC15] text-[#403A35]"
-                : "bg-white/10"
-            }`}
-          >
-            ✋
-          </button>
-
-          <div className="relative">
-
-            <button
-              type="button"
-              onClick={() =>
-                setReactionMenuOpen(
-                  (
-                    current
-                  ) =>
-                    !current
-                )
-              }
-              className="rounded-lg bg-white/10 px-3 py-2 text-xs"
-            >
-              😀
-            </button>
-
-            {reactionMenuOpen && (
-              <div className="absolute right-0 top-[44px] z-[230] flex gap-1 rounded-2xl bg-[#FFF7EB] p-2 shadow-2xl">
-
-                {[
-                  "👍",
-                  "👏",
-                  "❤️",
-                  "😂",
-                  "🎉",
-                ].map(
-                  (
-                    emoji
-                  ) => (
-                    <button
-                      key={
-                        emoji
-                      }
-                      type="button"
-                      onClick={() =>
-                        void sendReaction(
-                          emoji
-                        )
-                      }
-                      className="h-10 w-10 rounded-xl text-xl"
-                    >
-                      {emoji}
-                    </button>
-                  )
-                )}
-
-              </div>
-            )}
-
-          </div>
-
-          <button
-            type="button"
-            onClick={() =>
-              setDeviceSettingsOpen(
-                true
-              )
-            }
-            title="Device settings"
-            aria-label="Open device settings"
-            className="rounded-lg bg-white/10 px-3 py-2 text-xs"
-          >
-            🎛
-          </button>
-
-          <button
-            type="button"
-            onClick={() =>
-              setAccessibilityOpen(
-                true
-              )
-            }
-            className="rounded-lg bg-white/10 px-3 py-2 text-xs"
-          >
-            ♿
-          </button>
-
-          {teacher && (
-            <button
-              type="button"
-              onClick={() =>
-                setAttendanceOpen(
-                  true
-                )
-              }
-              className="rounded-lg bg-white/10 px-3 py-2 text-xs"
-            >
-              📋
-            </button>
-          )}
-
-          {teacher && (
-            <button
-              type="button"
-              onClick={() =>
-                setPermissionsOpen(
-                  true
-                )
-              }
-              className="rounded-lg bg-[#A2AB73]/20 px-3 py-2 text-xs"
-            >
-              ⚙
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={() =>
-              void copyInvite()
-            }
-            className="rounded-lg bg-white/10 px-3 py-2 text-xs font-black"
-          >
-            {copied
-              ? "✓"
-              : "Invite"}
-          </button>
-
-        </div>
-
+  return (
+    <main className={`relative flex h-dvh w-full flex-col overflow-hidden bg-[#24211F] text-white ${accessibility.highContrast ? "contrast-125" : ""}`}>
+      <header className="flex h-[64px] shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-[#302B27] px-3 sm:px-4">
+        <div className="flex min-w-0 items-center gap-2"><button type="button" onClick={() => setParticipantsOpen(true)} className="rounded-lg bg-white/10 px-3 py-2 text-xs font-black">👥 {rtc.participants.length}/{rtc.maxParticipants}</button><MeetingSessionTimer />{raisedHands.size > 0 && <button type="button" onClick={() => setRaisedHandsOpen((current) => !current)} className="rounded-lg bg-[#FACC15] px-3 py-2 text-xs font-black text-[#403A35]">✋ {raisedHands.size}</button>}<div className="flex rounded-xl bg-black/20 p-1"><button type="button" onClick={() => setActiveView("video")} className={`rounded-lg px-3 py-1.5 text-xs font-black ${activeView === "video" ? "bg-[#FFF7EB] text-[#403A35]" : "text-white/60"}`}>🎥 Video</button><button type="button" onClick={() => setActiveView("whiteboard")} className={`rounded-lg px-3 py-1.5 text-xs font-black ${activeView === "whiteboard" ? "bg-[#A2AB73]" : "text-white/60"}`}>✏ Board</button></div></div>
+        <div className="flex shrink-0 items-center gap-1.5"><button type="button" onClick={() => setChatOpen(true)} className="relative rounded-lg bg-white/10 px-3 py-2 text-xs">💬{chatUnreadCount > 0 && <span className="absolute -right-2 -top-2 rounded-full bg-[#CC3A63] px-1.5 text-[8px] font-black">{chatUnreadCount}</span>}</button><button type="button" onClick={() => void toggleHand()} className={`rounded-lg px-3 py-2 text-xs ${myHandRaised ? "bg-[#FACC15] text-[#403A35]" : "bg-white/10"}`}>✋</button><div className="relative"><button type="button" onClick={() => setReactionMenuOpen((current) => !current)} className="rounded-lg bg-white/10 px-3 py-2 text-xs">😀</button>{reactionMenuOpen && <div className="absolute right-0 top-[44px] z-[230] flex gap-1 rounded-2xl bg-[#FFF7EB] p-2 shadow-2xl">{["👍","👏","❤️","😂","🎉"].map((emoji) => <button key={emoji} type="button" onClick={() => void sendReaction(emoji)} className="h-10 w-10 rounded-xl text-xl">{emoji}</button>)}</div>}</div><button type="button" onClick={() => setDeviceSettingsOpen(true)} className="rounded-lg bg-white/10 px-3 py-2 text-xs">🎛</button><button type="button" onClick={() => setAccessibilityOpen(true)} className="rounded-lg bg-white/10 px-3 py-2 text-xs">♿</button>{teacher && <button type="button" onClick={() => setAttendanceOpen(true)} className="rounded-lg bg-white/10 px-3 py-2 text-xs">📋</button>}{teacher && <button type="button" onClick={() => setPermissionsOpen(true)} className="rounded-lg bg-[#A2AB73]/20 px-3 py-2 text-xs">⚙</button>}<button type="button" onClick={() => void copyInvite()} className="rounded-lg bg-white/10 px-3 py-2 text-xs font-black">{copied ? "✓" : "Invite"}</button></div>
       </header>
 
-      {/* WORKSPACE */}
+      <section className="min-h-0 flex-1 overflow-hidden p-2 sm:p-3"><div className="relative h-full overflow-hidden rounded-[20px] bg-[#181614]"><div className={`absolute inset-0 ${activeView === "video" ? "visible opacity-100" : "invisible pointer-events-none opacity-0"}`}><CohivaRtcStage /></div>{whiteboardMounted && <div className={`absolute inset-0 ${activeView === "whiteboard" ? "visible opacity-100" : "invisible pointer-events-none opacity-0"}`}><CohivaWhiteboard callId={callId} active={activeView === "whiteboard"} /></div>}<MeetingCaptionsOverlay visible={accessibility.captionsVisible} size={accessibility.captionSize} />{!accessibility.hideReactions && <div className="pointer-events-none absolute inset-x-0 bottom-6 z-[80] flex flex-col items-center gap-2">{floatingReactions.map((reaction) => <div key={reaction.id} className="rounded-full bg-[#FFF7EB] px-4 py-2 text-sm font-black text-[#403A35]"><span className="mr-2 text-xl">{reaction.emoji}</span>{reaction.name}</div>)}</div>}</div></section>
 
-      <section className="min-h-0 flex-1 overflow-hidden p-2 sm:p-3">
+      <footer className="flex h-[76px] shrink-0 items-center justify-center border-t border-white/10 bg-[#302B27] px-3"><div className="flex items-center gap-2"><CohivaRtcControls onOpenDevices={() => setDeviceSettingsOpen(true)} /><CohivaLeaveCallControl /></div></footer>
 
-        <div className="relative h-full overflow-hidden rounded-[20px] bg-[#181614]">
+      {teacher && <MeetingJoinRequests callId={callId} />}
+      <MeetingPermissionsPanel callId={callId} open={permissionsOpen} onClose={() => setPermissionsOpen(false)} />
+      {participantsOpen && <MeetingParticipantsPanel open onClose={() => setParticipantsOpen(false)} raisedHands={raisedHands} classPermissions={permissions} />}
+      {chatOpen && <MeetingChatPanel open onClose={() => setChatOpen(false)} callId={callId} />}
+      {teacher && attendanceOpen && <MeetingAttendancePanel open onClose={() => setAttendanceOpen(false)} callId={callId} />}
+      {accessibilityOpen && <MeetingAccessibilityPanel open onClose={() => setAccessibilityOpen(false)} settings={accessibility} onChange={setAccessibility} />}
+      <CohivaRtcDeviceSettings open={deviceSettingsOpen} onClose={() => setDeviceSettingsOpen(false)} />
 
-          <div
-            className={`absolute inset-0 ${
-              activeView ===
-                "video"
-                ? "visible opacity-100"
-                : "invisible pointer-events-none opacity-0"
-            }`}
-          >
-
-            <CohivaRtcStage />
-
-          </div>
-
-          {whiteboardMounted && (
-            <div
-              className={`absolute inset-0 ${
-                activeView ===
-                  "whiteboard"
-                  ? "visible opacity-100"
-                  : "invisible pointer-events-none opacity-0"
-              }`}
-            >
-
-              <CohivaWhiteboard
-                callId={
-                  callId
-                }
-                active={
-                  activeView ===
-                  "whiteboard"
-                }
-              />
-
-            </div>
-          )}
-
-          <MeetingCaptionsOverlay
-            visible={
-              accessibility.captionsVisible
-            }
-            size={
-              accessibility.captionSize
-            }
-          />
-
-          {!accessibility.hideReactions && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-6 z-[80] flex flex-col items-center gap-2">
-
-              {floatingReactions.map(
-                (
-                  reaction
-                ) => (
-                  <div
-                    key={
-                      reaction.id
-                    }
-                    className="rounded-full bg-[#FFF7EB] px-4 py-2 text-sm font-black text-[#403A35]"
-                  >
-                    <span className="mr-2 text-xl">
-                      {reaction.emoji}
-                    </span>
-
-                    {reaction.name}
-                  </div>
-                )
-              )}
-
-            </div>
-          )}
-
-        </div>
-
-      </section>
-
-      {/* =================================================
-          BOTTOM CALL CONTROLS
-
-          Student red button = leave meeting.
-
-          Host red button = custom Cohiva popup:
-          - End the call for everyone
-          - Leave the room
-      ================================================= */}
-
-      <footer className="flex h-[76px] shrink-0 items-center justify-center border-t border-white/10 bg-[#302B27] px-3">
-
-        <div className="flex items-center gap-2">
-
-          <CohivaRtcControls
-            onOpenDevices={() =>
-              setDeviceSettingsOpen(
-                true
-              )
-            }
-          />
-
-          {/* Reactions still use the temporary Stream side-channel in Phase 6A. */}
-          <ReactionsButton />
-
-          <CohivaLeaveCallControl />
-
-        </div>
-
-      </footer>
-
-      {teacher && (
-        <MeetingJoinRequests
-          callId={
-            callId
-          }
-        />
-      )}
-
-      <MeetingPermissionsPanel
-        callId={
-          callId
-        }
-        open={
-          permissionsOpen
-        }
-        onClose={() =>
-          setPermissionsOpen(
-            false
-          )
-        }
-      />
-
-      {participantsOpen && (
-        <MeetingParticipantsPanel
-          open
-          onClose={() =>
-            setParticipantsOpen(
-              false
-            )
-          }
-          raisedHands={
-            raisedHands
-          }
-          classPermissions={
-            permissions
-          }
-        />
-      )}
-
-      {chatOpen && (
-        <MeetingChatPanel
-          open
-          onClose={() =>
-            setChatOpen(
-              false
-            )
-          }
-          callId={
-            callId
-          }
-        />
-      )}
-
-      {teacher &&
-        attendanceOpen && (
-        <MeetingAttendancePanel
-          open
-          onClose={() =>
-            setAttendanceOpen(
-              false
-            )
-          }
-          callId={
-            callId
-          }
-        />
-      )}
-
-      {accessibilityOpen && (
-        <MeetingAccessibilityPanel
-          open
-          onClose={() =>
-            setAccessibilityOpen(
-              false
-            )
-          }
-          settings={
-            accessibility
-          }
-          onChange={
-            setAccessibility
-          }
-        />
-      )}
-
-      <CohivaRtcDeviceSettings
-        open={
-          deviceSettingsOpen
-        }
-        onClose={() =>
-          setDeviceSettingsOpen(
-            false
-          )
-        }
-      />
-
+      {chatNotification && !chatOpen && <button type="button" onClick={() => setChatOpen(true)} className="fixed bottom-24 right-4 z-[350] max-w-[320px] rounded-2xl bg-[#FFF7EB] p-4 text-left text-[#3D3732] shadow-2xl"><p className="text-xs font-black">{chatNotification.senderName}</p><p className="mt-1 line-clamp-2 text-[11px] text-[#756E64]">{chatNotification.text}</p></button>}
+      {raisedHandsOpen && <div className="fixed left-4 top-[74px] z-[340] w-[300px] rounded-2xl bg-[#FFF7EB] p-4 text-[#3D3732] shadow-2xl"><div className="flex items-center justify-between"><p className="font-black">Raised hands</p><button type="button" onClick={() => setRaisedHandsOpen(false)}>×</button></div><div className="mt-3 space-y-2">{Array.from(raisedHandDetails.values()).map((item) => <div key={item.userId} className="rounded-xl bg-[#F9F0E0] p-3 text-xs font-bold">✋ {item.name}</div>)}</div></div>}
     </main>
   );
 };
 
-/* =========================================================
-   LOADING
-========================================================= */
+const MeetingLoading = ({ text }: { text: string }) => <main className="flex h-dvh items-center justify-center bg-[#F9F0E0]"><div className="text-center"><div className="mx-auto h-11 w-11 animate-spin rounded-full border-4 border-[#CC3A63]/20 border-t-[#CC3A63]" /><p className="mt-5 font-bold text-[#756E64]">{text}</p></div></main>;
 
-const MeetingLoading = ({
-  text,
-}: {
-  text: string;
-}) => (
-  <main className="flex h-dvh items-center justify-center bg-[#F9F0E0]">
-
-    <div className="text-center">
-
-      <div className="mx-auto h-11 w-11 animate-spin rounded-full border-4 border-[#CC3A63]/20 border-t-[#CC3A63]" />
-
-      <p className="mt-5 font-bold text-[#756E64]">
-        {text}
-      </p>
-
-    </div>
-
-  </main>
-);
-
-/* =========================================================
-   ERROR
-========================================================= */
-
-const MeetingError = ({
-  message,
-}: {
-  message: string;
-}) => {
-  const router =
-    useRouter();
-
-  return (
-    <main className="flex h-dvh items-center justify-center bg-[#F9F0E0] p-5">
-
-      <div className="max-w-md rounded-[28px] bg-[#FFF7EB] p-8 text-center shadow-lg">
-
-        <div className="text-3xl">
-          ⚠
-        </div>
-
-        <h1 className="mt-4 text-2xl font-black text-[#3D3732]">
-          Meeting unavailable
-        </h1>
-
-        <p className="mt-3 text-[#756E64]">
-          {message}
-        </p>
-
-        <button
-          type="button"
-          onClick={() =>
-            router.replace(
-              "/"
-            )
-          }
-          className="mt-6 rounded-2xl bg-[#CC3A63] px-6 py-3 font-bold text-white"
-        >
-          Return Home
-        </button>
-
-      </div>
-
-    </main>
-  );
-};
+const MeetingError = ({ message }: { message: string }) => { const router = useRouter(); return <main className="flex h-dvh items-center justify-center bg-[#F9F0E0] p-5"><div className="w-full max-w-md rounded-[28px] bg-[#FFF7EB] p-8 text-center shadow-xl"><div className="text-4xl">⚠️</div><h1 className="mt-4 text-2xl font-black text-[#3D3732]">Unable to open meeting</h1><p className="mt-3 text-sm leading-6 text-[#756E64]">{message}</p><button type="button" onClick={() => router.replace("/")} className="mt-6 rounded-2xl bg-[#CC3A63] px-6 py-3 font-black text-white">Back to dashboard</button></div></main>; };

@@ -138,7 +138,7 @@ const UserMenu = () => {
       }
 
       setUser(null);
-      window.location.assign("/sign-in");
+      window.location.replace("/sign-in");
     } catch {
       setSigningOut(false);
     }

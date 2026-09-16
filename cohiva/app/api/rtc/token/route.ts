@@ -1,238 +1,109 @@
 import { NextResponse } from "next/server";
-
 import { currentUser } from "@/lib/auth/server";
 import {
   clampMeetingDurationMinutes,
   clampMeetingParticipants,
-  COHIVA_CALL_TYPE,
 } from "@/lib/cohivaMeetingConfig";
 import connectMongoDB from "@/lib/mongodb";
 import { createRtcToken } from "@/lib/rtc/token";
-import { getStreamServerClient } from "@/lib/streamServer";
-import CohivaRtcRoom from "@/models/CohivaRtcRoom";
+import MeetingJoinRequest from "@/models/MeetingJoinRequest";
+import CohivaRtcRoom, {
+  DEFAULT_COHIVA_RTC_PERMISSIONS,
+} from "@/models/CohivaRtcRoom";
 
 const normalizeWsUrl = (raw: string) => {
-  const value =
-    raw.trim() || "ws://127.0.0.1:4100/rtc";
-
+  const value = raw.trim() || "ws://127.0.0.1:4100/rtc";
   try {
     const url = new URL(value);
-    if (!url.pathname || url.pathname === "/") {
-      url.pathname = "/rtc";
-    }
+    if (!url.pathname || url.pathname === "/") url.pathname = "/rtc";
     return url.toString();
   } catch {
     return "ws://127.0.0.1:4100/rtc";
   }
 };
 
-const getMeetingMetadata = async (callId: string) => {
-  const streamClient = getStreamServerClient();
-  const call = streamClient.video.call(
-    COHIVA_CALL_TYPE,
-    callId
-  );
-
-  const response = await call.get();
-  const callData = response.call;
-
-  const hostUserId = callData.created_by?.id?.trim();
-
-  if (!hostUserId) {
-    throw new Error(
-      "This meeting does not have a valid host."
-    );
-  }
-
-  const limits = callData.settings?.limits;
-
-  const durationMinutes =
-    clampMeetingDurationMinutes(
-      Math.round(
-        Number(
-          limits?.max_duration_seconds ?? 2700
-        ) / 60
-      )
-    );
-
-  const maxParticipants =
-    clampMeetingParticipants(
-      limits?.max_participants ?? 20
-    );
-
-  const custom =
-    (callData.custom ?? {}) as Record<
-      string,
-      unknown
-    >;
-
-  const endedAt =
-    (callData as unknown as {
-      ended_at?: string | Date | null;
-    }).ended_at ?? null;
-
-  return {
-    hostUserId,
-    durationMinutes,
-    maxParticipants,
-    custom,
-    endedAt,
-  };
-};
-
-const ensureRtcRoom = async (
-  callId: string,
-  hostUserId: string
-) => {
-  await connectMongoDB();
-
-  return CohivaRtcRoom.findOneAndUpdate(
-    { callId },
-    {
-      $set: {
-        hostUserId,
-      },
-      $setOnInsert: {
-        callId,
-      },
-    },
-    {
-      upsert: true,
-      new: true,
-      setDefaultsOnInsert: true,
-    }
-  ).lean();
-};
-
 export async function POST(request: Request) {
   const user = await currentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (!user) {
-    return NextResponse.json(
-      { error: "Unauthorized" },
-      { status: 401 }
-    );
-  }
-
-  const secret =
-    process.env.COHIVA_RTC_SECRET?.trim();
-
-  if (!secret) {
-    return NextResponse.json(
-      { error: "Cohiva RTC is not configured." },
-      { status: 500 }
-    );
-  }
+  const secret = process.env.COHIVA_RTC_SECRET?.trim();
+  if (!secret) return NextResponse.json({ error: "Cohiva RTC is not configured." }, { status: 500 });
 
   let body: { callId?: string } = {};
-
-  try {
-    body = (await request.json()) as {
-      callId?: string;
-    };
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid request." },
-      { status: 400 }
-    );
-  }
-
+  try { body = await request.json(); } catch { return NextResponse.json({ error: "Invalid request." }, { status: 400 }); }
   const callId = body.callId?.trim();
-
-  if (
-    !callId ||
-    !/^[A-Za-z0-9_-]{3,120}$/.test(callId)
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "Use a room id containing only letters, numbers, - or _.",
-      },
-      { status: 400 }
-    );
+  if (!callId || !/^[A-Za-z0-9_-]{3,120}$/.test(callId)) {
+    return NextResponse.json({ error: "Invalid room id." }, { status: 400 });
   }
 
-  const name =
-    user.fullName?.trim() ||
-    user.username?.trim() ||
-    user.email.split("@")[0] ||
-    "Cohiva user";
+  await connectMongoDB();
+  const room = await CohivaRtcRoom.findOne({ callId });
+  if (!room) return NextResponse.json({ error: "Meeting not found." }, { status: 404 });
+  if (room.endedAt) return NextResponse.json({ error: "This meeting has already ended." }, { status: 410 });
 
-  /*
-   * RTC tokens are placed in the WebSocket URL. Do not
-   * embed a large uploaded data-URI avatar there. HTTP(S)
-   * profile images remain safe to include.
-   */
-  const image = user.imageUrl
-    ? `/api/auth/avatar/${encodeURIComponent(user.id)}`
-    : "";
-
-  try {
-    const metadata = await getMeetingMetadata(callId);
-
-    if (metadata.endedAt) {
+  const role = room.hostUserId === user.id ? "host" : "participant";
+  if (role !== "host") {
+    let allowed = room.memberUserIds?.includes(user.id) || room.accessMode === "open";
+    if (!allowed && room.accessMode === "approval") {
+      allowed = Boolean(await MeetingJoinRequest.exists({ callId, userId: user.id, status: "approved" }));
+    }
+    if (!allowed) {
       return NextResponse.json(
-        { error: "This meeting has already ended." },
-        { status: 410 }
+        { error: room.accessMode === "locked" ? "This meeting is locked." : "Host approval is required." },
+        { status: 403 }
       );
     }
-
-    await ensureRtcRoom(
-      callId,
-      metadata.hostUserId
-    );
-
-    const role =
-      metadata.hostUserId === user.id
-        ? "host"
-        : "participant";
-
-    const token = createRtcToken(
-      {
-        callId,
-        userId: user.id,
-        name,
-        image,
-        avatarIcon: user.avatarIcon || "",
-        role,
-        exp: Date.now() + 10 * 60_000,
-        maxParticipants:
-          metadata.maxParticipants,
-        durationMinutes:
-          metadata.durationMinutes,
-        custom: metadata.custom,
-      },
-      secret
-    );
-
-    const wsUrl = normalizeWsUrl(
-      process.env.NEXT_PUBLIC_COHIVA_RTC_URL ||
-        "ws://127.0.0.1:4100/rtc"
-    );
-
-    return NextResponse.json({
-      token,
-      wsUrl,
-      callId,
-      userId: user.id,
-      name,
-      role,
-      hostUserId: metadata.hostUserId,
-      durationMinutes: metadata.durationMinutes,
-      maxParticipants: metadata.maxParticipants,
-    });
-  } catch (tokenError) {
-    console.error(
-      "Cohiva RTC token error:",
-      tokenError
-    );
-
-    return NextResponse.json(
-      {
-        error:
-          "Unable to prepare this Cohiva RTC meeting.",
-      },
-      { status: 500 }
-    );
+    await CohivaRtcRoom.updateOne({ callId }, { $addToSet: { memberUserIds: user.id } });
   }
+
+  const durationMinutes = clampMeetingDurationMinutes(room.durationMinutes ?? 45);
+  const maxParticipants = clampMeetingParticipants(room.maxParticipants ?? 20);
+  const permissions = {
+    ...DEFAULT_COHIVA_RTC_PERMISSIONS,
+    ...(room.permissions && typeof room.permissions === "object" ? room.permissions : {}),
+    studentRecording: false,
+  };
+  const individualPermissions =
+    room.individualPermissions && typeof room.individualPermissions === "object"
+      ? room.individualPermissions
+      : {};
+
+  const custom = {
+    title: room.title || (room.kind === "personal" ? "Personal Cohiva Room" : "Cohiva Meeting"),
+    description: room.description || "",
+    cohiva_type: room.kind || "instant",
+    owner_id: room.hostUserId,
+    cohiva_access_mode: room.accessMode || "approval",
+    cohiva_permissions: permissions,
+    cohiva_individual_permissions: individualPermissions,
+    cohiva_duration_minutes: durationMinutes,
+    cohiva_max_participants: maxParticipants,
+  };
+
+  const name = user.fullName?.trim() || user.username?.trim() || user.email.split("@")[0] || "Cohiva user";
+  const image = user.imageUrl ? `/api/auth/avatar/${encodeURIComponent(user.id)}` : "";
+  const token = createRtcToken({
+    callId,
+    userId: user.id,
+    name,
+    image,
+    avatarIcon: user.avatarIcon || "",
+    role,
+    exp: Date.now() + 10 * 60_000,
+    maxParticipants,
+    durationMinutes,
+    custom,
+  }, secret);
+
+  return NextResponse.json({
+    token,
+    wsUrl: normalizeWsUrl(process.env.NEXT_PUBLIC_COHIVA_RTC_URL || "ws://127.0.0.1:4100/rtc"),
+    callId,
+    userId: user.id,
+    name,
+    role,
+    hostUserId: room.hostUserId,
+    durationMinutes,
+    maxParticipants,
+  });
 }

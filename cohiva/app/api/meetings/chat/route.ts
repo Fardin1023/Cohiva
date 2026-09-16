@@ -1,10 +1,6 @@
-import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
-
 import {
   auth,
 } from "@/lib/auth/server";
-
-import { getStreamServerClient } from "@/lib/streamServer";
 
 import {
   randomUUID,
@@ -13,13 +9,11 @@ import {
 import connectMongoDB from "@/lib/mongodb";
 
 import MeetingChatMessage from "@/models/MeetingChatMessage";
+import { broadcastRtcEvent } from "@/lib/rtc/server";
 
 /* =========================================================
    CONFIG
 ========================================================= */
-
-const CALL_TYPE =
-  COHIVA_CALL_TYPE;
 
 const CHAT_EVENT =
   "cohiva-chat";
@@ -397,7 +391,7 @@ export async function POST(
 
        Only broadcast a newly-created message.
 
-       If Stream has a temporary realtime failure,
+       If Cohiva RTC has a temporary realtime failure,
        the message stays safely stored in MongoDB.
        The client also has lightweight history sync.
     ===================================================== */
@@ -409,25 +403,20 @@ export async function POST(
       newlyCreated
     ) {
       try {
-        const streamClient =
-          getStreamServerClient();
+        await broadcastRtcEvent({
+          callId,
+          event: "custom",
+          data: {
+            custom: {
+              type:
+                CHAT_EVENT,
 
-        const call =
-          streamClient.video.call(
-            CALL_TYPE,
-            callId
-          );
+              ...message,
+            },
 
-        await call.sendCallEvent({
-          custom: {
-            type:
-              CHAT_EVENT,
-
-            ...message,
+            user_id:
+              userId,
           },
-
-          user_id:
-            userId,
         });
       } catch (
         realtimeError

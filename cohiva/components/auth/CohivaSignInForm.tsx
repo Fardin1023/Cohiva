@@ -108,12 +108,21 @@ const CohivaSignInForm = () => {
       </div>
 
       <div className="space-y-2">
-        <label
-          htmlFor="password"
-          className="text-sm font-semibold text-[#3D3732]"
-        >
-          Password
-        </label>
+        <div className="flex items-center justify-between gap-4">
+          <label
+            htmlFor="password"
+            className="text-sm font-semibold text-[#3D3732]"
+          >
+            Password
+          </label>
+
+          <Link
+            href="/forgot-password"
+            className="text-xs font-bold text-[#CC3A63] transition hover:text-[#B83258] hover:underline"
+          >
+            Forgot password?
+          </Link>
+        </div>
         <input
           id="password"
           name="password"

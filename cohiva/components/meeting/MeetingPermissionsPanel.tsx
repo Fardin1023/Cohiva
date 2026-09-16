@@ -1,15 +1,8 @@
 "use client";
 
 import {
-  OwnCapability,
-  useCall,
-  useCallStateHooks,
-} from "@stream-io/video-react-sdk";
-
-import {
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 
@@ -34,15 +27,7 @@ export type CohivaPermissions = {
   studentMic: boolean;
   studentCamera: boolean;
   studentScreenShare: boolean;
-
-  /*
-   * Kept so older Cohiva meetings
-   * don't break.
-   *
-   * Recording is forced to teacher-only.
-   */
   studentRecording: boolean;
-
   studentWhiteboard: boolean;
 };
 
@@ -53,14 +38,27 @@ export type CohivaPermissions = {
 export const DEFAULT_COHIVA_PERMISSIONS:
   CohivaPermissions = {
   studentMic: true,
-
   studentCamera: true,
-
   studentScreenShare: true,
-
   studentRecording: false,
-
   studentWhiteboard: false,
+};
+
+const normalizePermissions = (
+  value: unknown
+): CohivaPermissions => {
+  const raw =
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+      ? value as Partial<CohivaPermissions>
+      : {};
+
+  return {
+    ...DEFAULT_COHIVA_PERMISSIONS,
+    ...raw,
+    studentRecording: false,
+  };
 };
 
 /* =========================================================
@@ -72,104 +70,16 @@ const MeetingPermissionsPanel = ({
   onClose,
   callId,
 }: MeetingPermissionsPanelProps) => {
-  const call =
-    useCall();
-
   const rtc =
     useOptionalCohivaRtc();
 
-  const {
-    useCallCustomData,
-    useRemoteParticipants,
-  } =
-    useCallStateHooks();
-
-  const custom =
-    useCallCustomData();
-
-  const remoteParticipants =
-    useRemoteParticipants();
-
-  /* =====================================================
-     CURRENT COHIVA POLICY
-  ===================================================== */
-
-  const savedPermissions =
-    custom?.cohiva_permissions as
-      | Partial<CohivaPermissions>
-      | undefined;
-
-  const permissions:
-    CohivaPermissions = {
-    ...DEFAULT_COHIVA_PERMISSIONS,
-
-    ...savedPermissions,
-
-    /*
-     * Never allow an old meeting
-     * to restore student recording.
-     */
-    studentRecording:
-      false,
-  };
-
-  /*
-   * Keep latest policy available
-   * inside effects without causing
-   * unnecessary effect loops.
-   */
-  const permissionsRef =
-    useRef<CohivaPermissions>(
-      permissions
+  const [
+    permissions,
+    setPermissions,
+  ] =
+    useState<CohivaPermissions>(
+      DEFAULT_COHIVA_PERMISSIONS
     );
-
-  permissionsRef.current =
-    permissions;
-
-  /* =====================================================
-     STUDENT IDS
-  ===================================================== */
-
-  const studentIds =
-    useMemo(
-      () =>
-        Array.from(
-          new Set(
-            remoteParticipants
-              .map(
-                (
-                  participant
-                ) =>
-                  participant.userId
-              )
-              .filter(
-                (
-                  userId
-                ): userId is string =>
-                  Boolean(
-                    userId
-                  )
-              )
-          )
-        ),
-      [
-        remoteParticipants,
-      ]
-    );
-
-  /*
-   * Stable value for detecting
-   * participant membership changes.
-   */
-  const participantKey =
-    studentIds
-      .slice()
-      .sort()
-      .join("|");
-
-  /* =====================================================
-     UI STATE
-  ===================================================== */
 
   const [
     saving,
@@ -183,150 +93,138 @@ const MeetingPermissionsPanel = ({
   ] =
     useState("");
 
-  /* =====================================================
-     APPLY ACTUAL STREAM PERMISSIONS
+  const studentIds =
+    useMemo(
+      () =>
+        Array.from(
+          new Set(
+            (rtc?.participants ?? [])
+              .filter(
+                (
+                  participant
+                ) =>
+                  !participant.isHost &&
+                  participant.userId !==
+                    rtc?.selfUserId
+              )
+              .map(
+                (
+                  participant
+                ) =>
+                  participant.userId
+              )
+              .filter(Boolean)
+          )
+        ),
+      [
+        rtc?.participants,
+        rtc?.selfUserId,
+      ]
+    );
 
-     IMPORTANT:
-     muteUser() is not used here.
+  const loadPermissions =
+    async () => {
+      try {
+        const response =
+          await fetch(
+            `/api/meetings/permissions?callId=${encodeURIComponent(
+              callId
+            )}`,
+            {
+              cache:
+                "no-store",
+            }
+          );
 
-     revokePermissions() prevents the
-     student from simply turning the
-     device back on.
-  ===================================================== */
+        const result =
+          await response
+            .json()
+            .catch(
+              () =>
+                null
+            );
 
-  const applyStreamPermissions =
-    async (
-      userIds:
-        string[],
+        if (
+          !response.ok
+        ) {
+          throw new Error(
+            result?.error ||
+              "Unable to read meeting permissions."
+          );
+        }
 
-      policy:
-        CohivaPermissions
-    ) => {
-      if (!call) {
-        return;
+        setPermissions(
+          normalizePermissions(
+            result?.permissions
+          )
+        );
+      } catch (
+        permissionError
+      ) {
+        console.error(
+          "Read Cohiva permissions error:",
+          permissionError
+        );
+
+        setError(
+          permissionError instanceof
+            Error
+            ? permissionError.message
+            : "Unable to read meeting permissions."
+        );
       }
-
-      await Promise.all(
-        userIds.map(
-          async (
-            userId
-          ) => {
-            /* ===========================================
-               MICROPHONE
-            =========================================== */
-
-            if (
-              policy.studentMic
-            ) {
-              await call.grantPermissions(
-                userId,
-                [
-                  OwnCapability.SEND_AUDIO,
-                ]
-              );
-            } else {
-              await call.revokePermissions(
-                userId,
-                [
-                  OwnCapability.SEND_AUDIO,
-                ]
-              );
-            }
-
-            /* ===========================================
-               CAMERA
-            =========================================== */
-
-            if (
-              policy.studentCamera
-            ) {
-              await call.grantPermissions(
-                userId,
-                [
-                  OwnCapability.SEND_VIDEO,
-                ]
-              );
-            } else {
-              await call.revokePermissions(
-                userId,
-                [
-                  OwnCapability.SEND_VIDEO,
-                ]
-              );
-            }
-
-            /* ===========================================
-               SCREEN SHARE
-            =========================================== */
-
-            if (
-              policy.studentScreenShare
-            ) {
-              await call.grantPermissions(
-                userId,
-                [
-                  OwnCapability.SCREENSHARE,
-                ]
-              );
-            } else {
-              await call.revokePermissions(
-                userId,
-                [
-                  OwnCapability.SCREENSHARE,
-                ]
-              );
-            }
-          }
-        )
-      );
     };
-
-  /* =====================================================
-     APPLY CLASS POLICY TO NEW PARTICIPANTS
-
-     Example:
-     teacher blocks microphones,
-     then a new student enters.
-
-     The student must also receive the
-     existing blocked microphone policy.
-  ===================================================== */
 
   useEffect(() => {
     if (
-      !call ||
-      !call.isCreatedByMe ||
-      !participantKey
+      !open ||
+      rtc?.selfRole !==
+        "host"
     ) {
       return;
     }
 
-    const ids =
-      participantKey.split(
-        "|"
-      );
+    setError(
+      ""
+    );
 
-    void applyStreamPermissions(
-      ids,
-      permissionsRef.current
-    ).catch(
+    void loadPermissions();
+  }, [
+    open,
+    callId,
+    rtc?.selfRole,
+  ]);
+
+  useEffect(() => {
+    if (!rtc) {
+      return;
+    }
+
+    return rtc.subscribeEvent(
+      "call.updated",
       (
-        permissionError
+        data
       ) => {
-        console.error(
-          "Apply new participant permissions error:",
-          permissionError
-        );
+        const next =
+          data?.call?.custom
+            ?.cohiva_permissions;
+
+        if (
+          next &&
+          typeof next ===
+            "object"
+        ) {
+          setPermissions(
+            normalizePermissions(
+              next
+            )
+          );
+        }
       }
     );
   }, [
-    call,
-    participantKey,
+    rtc,
   ]);
-
-  /* =====================================================
-     CHANGE CLASS PERMISSION
-  ===================================================== */
 
   const changePermission =
     async (
@@ -337,8 +235,8 @@ const MeetingPermissionsPanel = ({
         | "studentWhiteboard"
     ) => {
       if (
-        !call ||
-        !call.isCreatedByMe ||
+        rtc?.selfRole !==
+          "host" ||
         saving
       ) {
         return;
@@ -347,15 +245,10 @@ const MeetingPermissionsPanel = ({
       const nextPermissions:
         CohivaPermissions = {
         ...permissions,
-
         [key]:
           !permissions[
             key
           ],
-
-        /*
-         * Recording remains locked.
-         */
         studentRecording:
           false,
       };
@@ -369,42 +262,76 @@ const MeetingPermissionsPanel = ({
           ""
         );
 
-        /* =============================================
-           SAVE COHIVA CLASS POLICY
-        ============================================= */
+        const response =
+          await fetch(
+            "/api/meetings/permissions",
+            {
+              method:
+                "PUT",
 
-        await call.update({
-          custom: {
-            ...(custom ?? {}),
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
 
-            cohiva_permissions:
-              nextPermissions,
-          },
-        });
-
-        /* =============================================
-           APPLY REAL STREAM MEDIA PERMISSION
-        ============================================= */
-
-        if (
-          key !==
-          "studentWhiteboard"
-        ) {
-          await applyStreamPermissions(
-            studentIds,
-            nextPermissions
+              body:
+                JSON.stringify({
+                  callId,
+                  permissions:
+                    nextPermissions,
+                }),
+            }
           );
 
+        const result =
+          await response
+            .json()
+            .catch(
+              () =>
+                null
+            );
+
+        if (
+          !response.ok
+        ) {
+          throw new Error(
+            result?.error ||
+              "Cohiva could not update this permission."
+          );
+        }
+
+        const saved =
+          normalizePermissions(
+            result?.permissions ??
+              nextPermissions
+          );
+
+        setPermissions(
+          saved
+        );
+
+        if (
+          key ===
+            "studentMic" ||
+          key ===
+            "studentCamera" ||
+          key ===
+            "studentScreenShare"
+        ) {
           const rtcField =
-            key === "studentMic"
+            key ===
+            "studentMic"
               ? "studentMic"
-              : key === "studentCamera"
+              : key ===
+                  "studentCamera"
                 ? "studentCamera"
                 : "studentScreenShare";
 
-          await rtc?.updateRoomPermission(
+          await rtc.updateRoomPermission(
             rtcField,
-            nextPermissions[rtcField]
+            saved[
+              rtcField
+            ]
           );
         }
       } catch (
@@ -416,7 +343,10 @@ const MeetingPermissionsPanel = ({
         );
 
         setError(
-          "Cohiva could not update this permission."
+          permissionError instanceof
+            Error
+            ? permissionError.message
+            : "Cohiva could not update this permission."
         );
       } finally {
         setSaving(
@@ -431,7 +361,7 @@ const MeetingPermissionsPanel = ({
 
   if (
     !open ||
-    !call?.isCreatedByMe
+    rtc?.selfRole !== "host"
   ) {
     return null;
   }

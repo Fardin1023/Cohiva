@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  useCall,
-  type CustomVideoEvent,
-  type StreamVideoEvent,
-} from "@stream-io/video-react-sdk";
+import { useOptionalCohivaRtc } from "@/components/rtc/CohivaRtcProvider";
 
 import {
   useUser,
@@ -201,8 +197,8 @@ const MeetingChatPanel = ({
   onClose,
   callId,
 }: MeetingChatPanelProps) => {
-  const call =
-    useCall();
+  const rtc =
+    useOptionalCohivaRtc();
 
   const {
     user,
@@ -433,7 +429,7 @@ const MeetingChatPanel = ({
   /* =====================================================
      FALLBACK HISTORY SYNC
 
-     Stream custom events are the primary realtime path.
+     Cohiva RTC events are the primary realtime path.
      This visibility-aware fallback is intentionally slower
      so an open chat panel does not hit MongoDB every 5s.
   ===================================================== */
@@ -461,62 +457,55 @@ const MeetingChatPanel = ({
   ===================================================== */
 
   useEffect(() => {
-    if (!call) {
+    if (!rtc) {
       return;
     }
 
-    const unsubscribe =
-      call.on(
-        "custom",
-        (
-          event:
-            StreamVideoEvent
-        ) => {
-          const payload =
-            (
-              event as
-                CustomVideoEvent
-            ).custom as
-              Record<
+    return rtc.subscribeEvent(
+      "custom",
+      (
+        data
+      ) => {
+        const payload =
+          data.custom as
+            | Record<
                 string,
                 unknown
-              >;
+              >
+            | undefined;
 
-          if (
-            payload.type !==
+        if (
+          !payload ||
+          payload.type !==
             CHAT_EVENT
-          ) {
-            return;
-          }
-
-          const message =
-            normalizeMessage(
-              payload
-            );
-
-          if (!message) {
-            return;
-          }
-
-          setMessages(
-            (
-              current
-            ) =>
-              mergeMessages(
-                current,
-                [
-                  message,
-                ]
-              )
-          );
+        ) {
+          return;
         }
-      );
 
-    return () => {
-      unsubscribe();
-    };
+        const message =
+          normalizeMessage(
+            payload
+          );
+
+        if (!message) {
+          return;
+        }
+
+        setMessages(
+          (
+            current
+          ) =>
+            mergeMessages(
+              current,
+              [
+                message,
+              ]
+            )
+        );
+      }
+    );
   }, [
-    call,
+    rtc,
   ]);
 
   /* =====================================================

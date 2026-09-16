@@ -1,456 +1,180 @@
-import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
+import { auth } from "@/lib/auth/server";
+import connectMongoDB from "@/lib/mongodb";
+import { broadcastRtcEvent } from "@/lib/rtc/server";
+import CohivaRtcRoom, {
+  DEFAULT_COHIVA_RTC_PERMISSIONS,
+} from "@/models/CohivaRtcRoom";
 
-import {
-  auth,
-} from "@/lib/auth/server";
+const WHITEBOARD_EVENT = "cohiva-whiteboard";
+const MAX_EVENTS = 256;
+const MAX_EVENT_BYTES = 4500;
 
-import { getStreamServerClient } from "@/lib/streamServer";
+type WhiteboardEvent = Record<string, unknown>;
 
-/* =========================================================
-   CONFIG
-========================================================= */
+const getBytes = (value: unknown) =>
+  new TextEncoder().encode(JSON.stringify(value)).length;
 
-const CALL_TYPE =
-  COHIVA_CALL_TYPE;
-
-const WHITEBOARD_EVENT =
-  "cohiva-whiteboard";
-
-const MAX_EVENTS =
-  256;
-
-const MAX_EVENT_BYTES =
-  4500;
-
-/* =========================================================
-   TYPES
-========================================================= */
-
-type WhiteboardEvent =
-  Record<
-    string,
-    unknown
-  >;
-
-type WhiteboardPermissions = {
-  studentWhiteboard?: boolean;
-};
-
-/* =========================================================
-   BYTE SIZE
-========================================================= */
-
-const getBytes =
-  (
-    value:
-      unknown
-  ) => {
-    return new TextEncoder()
-      .encode(
-        JSON.stringify(
-          value
-        )
-      )
-      .length;
-  };
-
-/* =========================================================
-   POST
-========================================================= */
-
-export async function POST(
-  request:
-    Request
-) {
+export async function POST(request: Request) {
   try {
-    /* =====================================================
-       AUTH
-    ===================================================== */
-
-    const {
-      userId,
-    } =
-      await auth();
+    const { userId } = await auth();
 
     if (!userId) {
       return Response.json(
-        {
-          error:
-            "Unauthorized.",
-        },
-        {
-          status: 401,
-        }
+        { error: "Unauthorized." },
+        { status: 401 }
       );
     }
 
-    /* =====================================================
-       BODY
-    ===================================================== */
-
-    const body =
-      await request.json();
-
+    const body = await request.json();
     const callId =
-      typeof body.callId ===
-      "string"
-        ? body.callId.trim()
+      typeof body.callId === "string"
+        ? body.callId.trim().slice(0, 120)
         : "";
-
-    const events =
-      body.events as
-        WhiteboardEvent[];
+    const events = body.events as WhiteboardEvent[];
 
     if (!callId) {
       return Response.json(
-        {
-          error:
-            "Meeting ID is required.",
-        },
-        {
-          status: 400,
-        }
+        { error: "Meeting ID is required." },
+        { status: 400 }
       );
     }
 
-    if (
-      !Array.isArray(
-        events
-      ) ||
-      events.length ===
-        0
-    ) {
+    if (!Array.isArray(events) || events.length === 0) {
       return Response.json(
-        {
-          error:
-            "Whiteboard events are required.",
-        },
-        {
-          status: 400,
-        }
+        { error: "Whiteboard events are required." },
+        { status: 400 }
       );
     }
 
-    if (
-      events.length >
-      MAX_EVENTS
-    ) {
+    if (events.length > MAX_EVENTS) {
       return Response.json(
-        {
-          error:
-            "Too many whiteboard events.",
-        },
-        {
-          status: 413,
-        }
+        { error: "Too many whiteboard events." },
+        { status: 413 }
       );
     }
 
-    /* =====================================================
-       LOAD CALL
-    ===================================================== */
+    await connectMongoDB();
 
-    const streamClient =
-      getStreamServerClient();
+    const room = await CohivaRtcRoom.findOne({ callId })
+      .select({
+        hostUserId: 1,
+        permissions: 1,
+      })
+      .lean();
 
-    const call =
-      streamClient.video.call(
-        CALL_TYPE,
-        callId
+    if (!room) {
+      return Response.json(
+        { error: "Meeting not found." },
+        { status: 404 }
       );
+    }
 
-    const callResponse =
-      await call.get();
-
-    const creatorId =
-      callResponse.call
-        .created_by?.id;
-
-    const isTeacher =
-      creatorId ===
-      userId;
-
-    const custom =
-      (
-        callResponse.call
-          .custom ??
-        {}
-      ) as Record<
-        string,
-        unknown
-      >;
-
-    const permissions =
-      custom
-        .cohiva_permissions as
-        | WhiteboardPermissions
-        | undefined;
-
+    const isTeacher = room.hostUserId === userId;
+    const storedPermissions =
+      room.permissions && typeof room.permissions === "object"
+        ? (room.permissions as Record<string, unknown>)
+        : {};
     const studentCanDraw =
-      permissions
-        ?.studentWhiteboard ===
-      true;
+      typeof storedPermissions.studentWhiteboard === "boolean"
+        ? storedPermissions.studentWhiteboard
+        : DEFAULT_COHIVA_RTC_PERMISSIONS.studentWhiteboard;
 
-    /* =====================================================
-       VALIDATE EACH EVENT
-    ===================================================== */
+    const safeEvents: Record<string, unknown>[] = [];
 
-    const safeEvents:
-      Record<
-        string,
-        unknown
-      >[] =
-      [];
-
-    for (
-      const event of
-        events
-    ) {
-      if (
-        !event ||
-        typeof event !==
-          "object" ||
-        Array.isArray(
-          event
-        )
-      ) {
+    for (const event of events) {
+      if (!event || typeof event !== "object" || Array.isArray(event)) {
         return Response.json(
-          {
-            error:
-              "Invalid whiteboard event.",
-          },
-          {
-            status: 400,
-          }
+          { error: "Invalid whiteboard event." },
+          { status: 400 }
         );
       }
 
-      const action =
-        event.action;
+      const action = event.action;
 
-      if (
-        typeof action !==
-        "string"
-      ) {
+      if (typeof action !== "string") {
         return Response.json(
-          {
-            error:
-              "Invalid whiteboard action.",
-          },
-          {
-            status: 400,
-          }
+          { error: "Invalid whiteboard action." },
+          { status: 400 }
         );
       }
 
-      /* ===============================================
-         SYNC REQUEST
-
-         Everyone may request the current
-         teacher board.
-      =============================================== */
-
-      if (
-        action ===
-        "sync-request"
-      ) {
-        // Allowed.
-      }
-
-      /* ===============================================
-         ELEMENT CHANGES
-
-         Teacher = always allowed.
-
-         Student = only when teacher has
-         enabled Whiteboard permission.
-      =============================================== */
-
-      else if (
-        action ===
-        "elements"
-      ) {
-        if (
-          !isTeacher &&
-          !studentCanDraw
-        ) {
+      if (action === "sync-request") {
+        // Everyone may ask the teacher for the latest board.
+      } else if (action === "elements") {
+        if (!isTeacher && !studentCanDraw) {
           return Response.json(
             {
               error:
                 "The teacher has disabled student whiteboard editing.",
             },
-            {
-              status: 403,
-            }
+            { status: 403 }
           );
         }
-      }
-
-      /* ===============================================
-         CLEAR BOARD
-
-         Teacher only.
-      =============================================== */
-
-      else if (
-        action ===
-        "clear"
-      ) {
-        if (
-          !isTeacher
-        ) {
+      } else if (action === "clear" || action === "empty-snapshot") {
+        if (!isTeacher) {
           return Response.json(
             {
               error:
-                "Only the teacher can clear the whiteboard.",
+                action === "clear"
+                  ? "Only the teacher can clear the whiteboard."
+                  : "Only the teacher can publish the board snapshot.",
             },
-            {
-              status: 403,
-            }
+            { status: 403 }
           );
         }
-      }
-
-      /* ===============================================
-         EMPTY SNAPSHOT
-
-         Teacher only.
-      =============================================== */
-
-      else if (
-        action ===
-        "empty-snapshot"
-      ) {
-        if (
-          !isTeacher
-        ) {
-          return Response.json(
-            {
-              error:
-                "Only the teacher can publish the board snapshot.",
-            },
-            {
-              status: 403,
-            }
-          );
-        }
-      }
-
-      /* ===============================================
-         EVERYTHING ELSE
-      =============================================== */
-
-      else {
+      } else {
         return Response.json(
-          {
-            error:
-              "Unsupported whiteboard action.",
-          },
-          {
-            status: 400,
-          }
+          { error: "Unsupported whiteboard action." },
+          { status: 400 }
         );
       }
-
-      /* ===============================================
-         SERVER EVENT
-      =============================================== */
 
       const customEvent = {
         ...event,
-
-        type:
-          WHITEBOARD_EVENT,
-
-        senderId:
-          userId,
+        type: WHITEBOARD_EVENT,
+        senderId: userId,
       };
 
-      if (
-        getBytes(
-          customEvent
-        ) >
-        MAX_EVENT_BYTES
-      ) {
+      if (getBytes(customEvent) > MAX_EVENT_BYTES) {
         return Response.json(
-          {
-            error:
-              "Whiteboard event is too large.",
-          },
-          {
-            status: 413,
-          }
+          { error: "Whiteboard event is too large." },
+          { status: 413 }
         );
       }
 
-      safeEvents.push(
-        customEvent
-      );
+      safeEvents.push(customEvent);
     }
 
-    /* =====================================================
-       RELAY
+    const CONCURRENCY = 4;
 
-       Small groups avoid firing hundreds
-       of calls simultaneously.
-    ===================================================== */
-
-    const CONCURRENCY =
-      4;
-
-    for (
-      let index = 0;
-      index <
-      safeEvents.length;
-      index +=
-        CONCURRENCY
-    ) {
-      const group =
-        safeEvents.slice(
-          index,
-          index +
-            CONCURRENCY
-        );
+    for (let index = 0; index < safeEvents.length; index += CONCURRENCY) {
+      const group = safeEvents.slice(index, index + CONCURRENCY);
 
       await Promise.all(
-        group.map(
-          (
-            customEvent
-          ) =>
-            call.sendCallEvent({
-              custom:
-                customEvent,
-
-              user_id:
-                userId,
-            })
+        group.map((customEvent) =>
+          broadcastRtcEvent({
+            callId,
+            event: "custom",
+            data: {
+              custom: customEvent,
+              user_id: userId,
+            },
+          })
         )
       );
     }
 
     return Response.json({
       success: true,
-
-      relayed:
-        safeEvents.length,
-
-      studentWhiteboard:
-        studentCanDraw,
+      relayed: safeEvents.length,
+      studentWhiteboard: studentCanDraw,
     });
   } catch (error) {
-    console.error(
-      "Cohiva whiteboard event error:",
-      error
-    );
+    console.error("Cohiva whiteboard event error:", error);
 
     return Response.json(
-      {
-        error:
-          "Unable to relay whiteboard update.",
-      },
-      {
-        status: 500,
-      }
+      { error: "Unable to relay whiteboard update." },
+      { status: 500 }
     );
   }
 }

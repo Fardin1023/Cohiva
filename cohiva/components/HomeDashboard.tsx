@@ -2,10 +2,6 @@
 
 import { useUser } from "@/components/providers/AuthProvider";
 
-import {
-  useStreamVideoClient,
-} from "@stream-io/video-react-sdk";
-
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -19,7 +15,6 @@ import {
 
 import { useSmartPolling } from "@/lib/useSmartPolling";
 import {
-  COHIVA_CALL_TYPE,
   COHIVA_DEFAULT_DURATION_MINUTES,
   COHIVA_DEFAULT_PARTICIPANTS,
 } from "@/lib/cohivaMeetingConfig";
@@ -175,9 +170,6 @@ const HomeDashboard = () => {
     isLoaded,
   } = useUser();
 
-  const client =
-    useStreamVideoClient();
-
   const userId =
     user?.id;
 
@@ -251,199 +243,57 @@ const HomeDashboard = () => {
 
 
   /* =====================================================
-     LOAD REAL STREAM MEETING DATA
+     LOAD COHIVA MEETING DATA
   ===================================================== */
 
   const loadDashboardMeetings =
     useCallback(
       async () => {
-        if (
-          !client ||
-          !userId
-        ) {
+        if (!userId) {
           return;
         }
 
         try {
-          if (
-            !dashboardLoadedRef.current
-          ) {
-            setMeetingsLoading(
-              true
+          if (!dashboardLoadedRef.current) {
+            setMeetingsLoading(true);
+          }
+
+          const response = await fetch(
+            "/api/meetings/list?scope=dashboard",
+            { cache: "no-store" }
+          );
+
+          const result = await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              result.error ||
+                "Unable to load meeting data."
             );
           }
 
-          const response =
-            await client.queryCalls({
-              filter_conditions: {
-                type: {
-                  $eq:
-                    COHIVA_CALL_TYPE,
-                },
-
-                members: {
-                  $in: [
-                    userId,
-                  ],
-                },
-              },
-
-              limit: 100,
-
-              watch: false,
-            });
-
-          const now =
-            Date.now();
-
-          /* =============================================
-             UPCOMING
-          ============================================= */
-
-          const futureCalls =
-            response.calls
-              .filter(
-                (call) => {
-                  const startsAt =
-                    call.state
-                      .startsAt;
-
-                  const custom =
-                    call.state
-                      .custom;
-
-                  const meetingType =
-                    typeof custom
-                      ?.cohiva_type ===
-                    "string"
-                      ? custom
-                          .cohiva_type
-                      : "";
-
-                  return (
-                    meetingType ===
-                      "scheduled" &&
-                    startsAt &&
-                    startsAt.getTime() >
-                      now
-                  );
-                }
-              )
-              .sort(
-                (
-                  first,
-                  second
-                ) => {
-                  const firstTime =
-                    first.state
-                      .startsAt
-                      ?.getTime() ??
-                    Infinity;
-
-                  const secondTime =
-                    second.state
-                      .startsAt
-                      ?.getTime() ??
-                    Infinity;
-
-                  return (
-                    firstTime -
-                    secondTime
-                  );
-                }
-              );
-
-          const nextCall =
-            futureCalls[0];
-
           if (
-            nextCall &&
-            nextCall.state
-              .startsAt
+            result.upcoming &&
+            result.upcoming.startsAt
           ) {
-            const custom =
-              nextCall.state
-                .custom;
-
-            const title =
-              typeof custom
-                ?.title ===
-              "string"
-                ? custom.title
-                : "Cohiva Meeting";
-
             setUpcomingMeeting({
-              id:
-                nextCall.id,
-
-              title,
-
-              startsAt:
-                nextCall.state
-                  .startsAt,
+              id: result.upcoming.id,
+              title:
+                result.upcoming.title ||
+                "Cohiva Meeting",
+              startsAt: new Date(
+                result.upcoming.startsAt
+              ),
             });
           } else {
-            setUpcomingMeeting(
-              null
-            );
+            setUpcomingMeeting(null);
           }
 
-          /* =============================================
-             PREVIOUS
-          ============================================= */
-
-          const previousCalls =
-            response.calls.filter(
-              (call) => {
-                const custom =
-                  call.state
-                    .custom;
-
-                const meetingType =
-                  typeof custom
-                    ?.cohiva_type ===
-                  "string"
-                    ? custom
-                        .cohiva_type
-                    : "";
-
-                /*
-                 * Personal Room should
-                 * never count as history.
-                 */
-                if (
-                  meetingType ===
-                  "personal"
-                ) {
-                  return false;
-                }
-
-                const endedAt =
-                  call.state
-                    .endedAt;
-
-                const startsAt =
-                  call.state
-                    .startsAt;
-
-                if (endedAt) {
-                  return true;
-                }
-
-                if (
-                  startsAt &&
-                  startsAt.getTime() <
-                    now
-                ) {
-                  return true;
-                }
-
-                return false;
-              }
-            );
-
           setPreviousMeetingCount(
-            previousCalls.length
+            Number(
+              result.previousCount ??
+                0
+            )
           );
         } catch (error) {
           console.error(
@@ -451,42 +301,23 @@ const HomeDashboard = () => {
             error
           );
 
-          setUpcomingMeeting(
-            null
-          );
-
-          setPreviousMeetingCount(
-            0
-          );
+          setUpcomingMeeting(null);
+          setPreviousMeetingCount(0);
         } finally {
-          if (
-            !dashboardLoadedRef.current
-          ) {
-            dashboardLoadedRef.current =
-              true;
-
-            setMeetingsLoading(
-              false
-            );
+          if (!dashboardLoadedRef.current) {
+            dashboardLoadedRef.current = true;
+            setMeetingsLoading(false);
           }
         }
       },
-      [
-        client,
-        userId,
-      ]
+      [userId]
     );
 
   useSmartPolling(
     loadDashboardMeetings,
     {
-      enabled:
-        Boolean(
-          client &&
-          userId
-        ),
-      intervalMs:
-        60_000,
+      enabled: Boolean(userId),
+      intervalMs: 60_000,
     }
   );
 

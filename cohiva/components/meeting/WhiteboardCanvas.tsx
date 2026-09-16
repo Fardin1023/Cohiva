@@ -14,15 +14,8 @@ import type {
 } from "@excalidraw/excalidraw/element/types";
 
 import {
-  CallingState,
-  useCall,
-  useCallStateHooks,
-} from "@stream-io/video-react-sdk";
-
-import type {
-  CustomVideoEvent,
-  StreamVideoEvent,
-} from "@stream-io/video-react-sdk";
+  useOptionalCohivaRtc,
+} from "@/components/rtc/CohivaRtcProvider";
 
 import {
   useCallback,
@@ -223,21 +216,16 @@ const WhiteboardCanvas = ({
   callId,
   active,
 }: WhiteboardCanvasProps) => {
-  const call =
-    useCall();
+  const rtc =
+    useOptionalCohivaRtc();
 
-  const {
-    useCallCallingState,
-  } =
-    useCallStateHooks();
-
-  const callingState =
-    useCallCallingState();
+  const rtcStatus =
+    rtc?.status ??
+    "idle";
 
   const isTeacher =
-    Boolean(
-      call?.isCreatedByMe
-    );
+    rtc?.selfRole ===
+    "host";
 
   /* =====================================================
      PERMISSION STATE
@@ -515,12 +503,6 @@ const WhiteboardCanvas = ({
         lockFirst:
           boolean
       ) => {
-        if (
-          !call
-        ) {
-          return;
-        }
-
         /*
          * Unique ID for this request.
          *
@@ -538,7 +520,32 @@ const WhiteboardCanvas = ({
 
         try {
           const response =
-            await call.get();
+            await fetch(
+              `/api/meetings/permissions?callId=${encodeURIComponent(
+                callId
+              )}`,
+              {
+                cache:
+                  "no-store",
+              }
+            );
+
+          const result =
+            await response
+              .json()
+              .catch(
+                () =>
+                  null
+              );
+
+          if (
+            !response.ok
+          ) {
+            throw new Error(
+              result?.error ||
+                "Unable to read whiteboard permission."
+            );
+          }
 
           /*
            * A newer permission request
@@ -551,20 +558,10 @@ const WhiteboardCanvas = ({
             return;
           }
 
-          const custom =
-            (
-              response.call
-                .custom ??
-              {}
-            ) as Record<
-              string,
-              unknown
-            >;
-
           const allowed =
-            readStudentWhiteboardPermission(
-              custom
-            );
+            result?.permissions
+              ?.studentWhiteboard ===
+            true;
 
           setStudentDrawingAllowed(
             allowed
@@ -599,7 +596,7 @@ const WhiteboardCanvas = ({
         }
       },
       [
-        call,
+        callId,
         hardLockStudent,
         isTeacher,
       ]
@@ -614,7 +611,7 @@ const WhiteboardCanvas = ({
            ↓
        useLayoutEffect locks before browser paint
            ↓
-       call.get() fetches latest permission
+       Cohiva permission API fetches latest policy
            ↓
        explicit true → unlock
        false / missing / error → remain view-only
@@ -622,8 +619,7 @@ const WhiteboardCanvas = ({
 
   useEffect(() => {
     if (
-      !active ||
-      !call
+      !active
     ) {
       return;
     }
@@ -635,6 +631,10 @@ const WhiteboardCanvas = ({
     if (
       isTeacher
     ) {
+      setPermissionReady(
+        true
+      );
+
       void refreshWhiteboardPermission(
         false
       );
@@ -652,7 +652,6 @@ const WhiteboardCanvas = ({
     );
   }, [
     active,
-    call,
     isTeacher,
     refreshWhiteboardPermission,
   ]);
@@ -664,135 +663,117 @@ const WhiteboardCanvas = ({
 
        Settings
            ↓
-       call.update()
+       Cohiva permission API
            ↓
-       Stream call.updated
+       RTC call.updated event
            ↓
        student updates immediately
 
-     We use event custom data directly
-     when available.
-
-     We DO NOT use old cached custom
-     state to unlock during startup.
+     We use event custom data directly when available.
+     We DO NOT use old cached state to unlock on startup.
   ===================================================== */
 
   useEffect(() => {
-    if (
-      !call
-    ) {
+    if (!rtc) {
       return;
     }
 
-    const unsubscribe =
-      call.on(
-        "call.updated",
-        (
-          event:
-            StreamVideoEvent
-        ) => {
-          /*
-           * Whiteboard is hidden.
-           *
-           * Never preserve an old "allowed" state for a
-           * student. The next opening must begin locked and
-           * perform a fresh authoritative permission check.
-           */
+    return rtc.subscribeEvent(
+      "call.updated",
+      (
+        data
+      ) => {
+        /*
+         * Whiteboard is hidden.
+         *
+         * Never preserve an old "allowed" state for a
+         * student. The next opening must begin locked and
+         * perform a fresh authoritative permission check.
+         */
+        if (
+          !active
+        ) {
           if (
-            !active
+            !isTeacher
           ) {
+            hardLockStudent();
+          }
+
+          return;
+        }
+
+        const eventCustom =
+          data?.call?.custom as
+            | Record<
+                string,
+                unknown
+              >
+            | undefined;
+
+        if (
+          eventCustom
+        ) {
+          const permissions =
+            eventCustom
+              .cohiva_permissions as
+              | CohivaPermissions
+              | undefined;
+
+          const value =
+            permissions
+              ?.studentWhiteboard;
+
+          if (
+            typeof value ===
+            "boolean"
+          ) {
+            /*
+             * Invalidate any older
+             * permission API request.
+             */
+            permissionRequestRef.current +=
+              1;
+
+            setStudentDrawingAllowed(
+              value
+            );
+
+            setPermissionReady(
+              true
+            );
+
             if (
+              !value &&
               !isTeacher
             ) {
-              hardLockStudent();
+              const api =
+                apiRef.current;
+
+              if (
+                api
+              ) {
+                api.setActiveTool({
+                  type:
+                    "hand",
+                });
+              }
             }
 
             return;
           }
-
-          const updatedCall =
-            (
-              event as any
-            )?.call;
-
-          const eventCustom =
-            updatedCall
-              ?.custom as
-              | Record<
-                  string,
-                  unknown
-                >
-              | undefined;
-
-          if (
-            eventCustom
-          ) {
-            const permissions =
-              eventCustom
-                .cohiva_permissions as
-                | CohivaPermissions
-                | undefined;
-
-            const value =
-              permissions
-                ?.studentWhiteboard;
-
-            if (
-              typeof value ===
-              "boolean"
-            ) {
-              /*
-               * Invalidate any older
-               * call.get() request.
-               */
-              permissionRequestRef.current +=
-                1;
-
-              setStudentDrawingAllowed(
-                value
-              );
-
-              setPermissionReady(
-                true
-              );
-
-              if (
-                !value &&
-                !isTeacher
-              ) {
-                const api =
-                  apiRef.current;
-
-                if (
-                  api
-                ) {
-                  api.setActiveTool({
-                    type:
-                      "hand",
-                  });
-                }
-              }
-
-              return;
-            }
-          }
-
-          /*
-           * If event payload did not
-           * contain custom data, fetch
-           * authoritative state.
-           */
-          void refreshWhiteboardPermission(
-            false
-          );
         }
-      );
 
-    return () => {
-      unsubscribe();
-    };
+        /*
+         * If event payload did not contain custom data,
+         * fetch authoritative state from MongoDB.
+         */
+        void refreshWhiteboardPermission(
+          false
+        );
+      }
+    );
   }, [
-    call,
+    rtc,
     active,
     isTeacher,
     hardLockStudent,
@@ -1409,28 +1390,27 @@ const WhiteboardCanvas = ({
   ===================================================== */
 
   useEffect(() => {
-    if (
-      !call
-    ) {
+    if (!rtc) {
       return;
     }
 
     const unsubscribe =
-      call.on(
+      rtc.subscribeEvent(
         "custom",
         (
-          event:
-            StreamVideoEvent
+          data
         ) => {
           const payload =
-            (
-              event as
-                CustomVideoEvent
-            ).custom as
-              Record<
-                string,
-                unknown
-              >;
+            data.custom as
+              | Record<
+                  string,
+                  unknown
+                >
+              | undefined;
+
+          if (!payload) {
+            return;
+          }
 
           if (
             payload.type !==
@@ -1677,7 +1657,7 @@ const WhiteboardCanvas = ({
       unsubscribe();
     };
   }, [
-    call,
+    rtc,
     isTeacher,
     applyRemoteElements,
     sendFullSnapshot,
@@ -1693,7 +1673,6 @@ const WhiteboardCanvas = ({
   useEffect(() => {
     if (
       !active ||
-      !call ||
       isTeacher ||
       !initialBoardLoaded
     ) {
@@ -1755,7 +1734,6 @@ const WhiteboardCanvas = ({
     };
   }, [
     active,
-    call,
     isTeacher,
     initialBoardLoaded,
     relayWhiteboardEvents,
@@ -1764,23 +1742,19 @@ const WhiteboardCanvas = ({
   /* =====================================================
      RECONNECT RECOVERY
 
-     Keep whiteboard state safe across temporary network
+     Keep whiteboard state safe across temporary Cohiva RTC
      interruptions. Students fail closed while disconnected
-     and request a fresh teacher snapshot after Stream joins
-     again. Teachers preserve their local scene and publish a
-     fresh full snapshot after recovery.
+     and request a fresh teacher snapshot after RTC rejoins.
+     Teachers preserve their local scene and publish a fresh
+     full snapshot after recovery.
   ===================================================== */
 
   useEffect(() => {
     const interrupted =
-      callingState ===
-        CallingState.OFFLINE ||
-      callingState ===
-        CallingState.RECONNECTING ||
-      callingState ===
-        CallingState.RECONNECTING_FAILED ||
-      callingState ===
-        CallingState.MIGRATING;
+      rtcStatus ===
+        "reconnecting" ||
+      rtcStatus ===
+        "error";
 
     if (interrupted) {
       connectionInterruptedRef.current =
@@ -1797,11 +1771,10 @@ const WhiteboardCanvas = ({
     }
 
     if (
-      callingState !==
-        CallingState.JOINED ||
+      rtcStatus !==
+        "joined" ||
       !connectionInterruptedRef.current ||
-      !active ||
-      !call
+      !active
     ) {
       return;
     }
@@ -1877,8 +1850,7 @@ const WhiteboardCanvas = ({
       );
   }, [
     active,
-    call,
-    callingState,
+    rtcStatus,
     hardLockStudent,
     isTeacher,
     refreshWhiteboardPermission,

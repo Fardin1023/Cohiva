@@ -69,6 +69,15 @@ export type CohivaRtcParticipantMediaState = {
   screenShare: boolean;
 };
 
+export type CohivaRtcRealtimeEvent = {
+  event: string;
+  data: Record<string, any>;
+};
+
+type CohivaRtcEventListener = (
+  data: Record<string, any>
+) => void;
+
 export type CohivaRtcModerationControl =
   | "audio"
   | "video"
@@ -142,6 +151,13 @@ type CohivaRtcContextValue = {
     durationMinutes: number,
     maxParticipants: number
   ) => Promise<void>;
+  sendCustomEvent: (
+    custom: Record<string, unknown>
+  ) => Promise<void>;
+  subscribeEvent: (
+    event: string,
+    listener: CohivaRtcEventListener
+  ) => () => void;
 };
 
 const DEFAULT_ROOM_PERMISSIONS: CohivaRtcRoomPermissions = {
@@ -242,6 +258,67 @@ export const CohivaRtcProvider = ({
   const selectedAudioInputRef = useRef("");
   const selectedVideoInputRef = useRef("");
   const selectedAudioOutputRef = useRef("");
+  const eventListenersRef = useRef(
+    new Map<string, Set<CohivaRtcEventListener>>()
+  );
+
+  const subscribeEvent = useCallback(
+    (
+      event: string,
+      listener: CohivaRtcEventListener
+    ) => {
+      const key = event.trim();
+
+      if (!key) {
+        return () => {};
+      }
+
+      const listeners =
+        eventListenersRef.current.get(key) ??
+        new Set<CohivaRtcEventListener>();
+
+      listeners.add(listener);
+      eventListenersRef.current.set(key, listeners);
+
+      return () => {
+        const current =
+          eventListenersRef.current.get(key);
+
+        if (!current) return;
+
+        current.delete(listener);
+
+        if (current.size === 0) {
+          eventListenersRef.current.delete(key);
+        }
+      };
+    },
+    []
+  );
+
+  const emitEvent = useCallback(
+    (
+      event: string,
+      data: Record<string, any>
+    ) => {
+      const listeners =
+        eventListenersRef.current.get(event);
+
+      if (!listeners) return;
+
+      listeners.forEach((listener) => {
+        try {
+          listener(data);
+        } catch (listenerError) {
+          console.error(
+            "Cohiva RTC event listener error:",
+            listenerError
+          );
+        }
+      });
+    },
+    []
+  );
 
   const setSelectedAudioInput = useCallback((deviceId: string) => {
     selectedAudioInputRef.current = deviceId;
@@ -319,6 +396,15 @@ export const CohivaRtcProvider = ({
         }, 12_000);
       }),
     []
+  );
+
+  const sendCustomEvent = useCallback(
+    async (custom: Record<string, unknown>) => {
+      await request("customEvent", {
+        custom,
+      });
+    },
+    [request]
   );
 
   const ensureSendTransport = useCallback(async () => {
@@ -1267,6 +1353,11 @@ export const CohivaRtcProvider = ({
 
             if (message.type !== "event") return;
 
+            emitEvent(
+              String(message.event || ""),
+              (message.data ?? {}) as Record<string, any>
+            );
+
             if (
               message.event === "participant-joined" &&
               message.data?.participant
@@ -1584,6 +1675,7 @@ export const CohivaRtcProvider = ({
       callId,
       consumeProducer,
       ensureRecvTransport,
+      emitEvent,
       refreshDevices,
       removeRemoteProducer,
       request,
@@ -1893,6 +1985,8 @@ export const CohivaRtcProvider = ({
       updateRoomPermission,
       setIndividualPermission,
       updateLimits,
+      sendCustomEvent,
+      subscribeEvent,
     }),
     [
       audioInputs,
@@ -1941,6 +2035,8 @@ export const CohivaRtcProvider = ({
       toggleScreenShare,
       updateLimits,
       updateRoomPermission,
+      sendCustomEvent,
+      subscribeEvent,
       videoInputs,
     ]
   );

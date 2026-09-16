@@ -1,18 +1,12 @@
-import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
-
 import { auth } from "@/lib/auth/server";
 import { NextRequest, NextResponse } from "next/server";
-import { getStreamServerClient } from "@/lib/streamServer";
-
 import connectMongoDB from "@/lib/mongodb";
 import MeetingAttendance from "@/models/MeetingAttendance";
+import CohivaRtcRoom from "@/models/CohivaRtcRoom";
 
 /* =========================================================
    CONFIG
 ========================================================= */
-
-const CALL_TYPE =
-  COHIVA_CALL_TYPE;
 
 /*
  * MeetingRoom sends a heartbeat every 20 seconds.
@@ -1346,43 +1340,20 @@ export async function GET(
        TEACHER VERIFICATION
     ===================================================== */
 
-    const streamClient =
-      getStreamServerClient();
+    await connectMongoDB();
 
-    const queryResult =
-      await streamClient.video.queryCalls({
-        filter_conditions: {
-          id: {
-            $eq:
-              callId,
-          },
+    const room =
+      await CohivaRtcRoom.findOne({
+        callId,
+        hostUserId:
+          userId,
+      })
+        .select({
+          _id: 1,
+        })
+        .lean();
 
-          type: {
-            $eq:
-              CALL_TYPE,
-          },
-
-          created_by_user_id: {
-            $eq:
-              userId,
-          },
-        },
-      });
-
-    const teacherCalls =
-      (
-        queryResult as {
-          calls?: unknown[];
-        }
-      ).calls;
-
-    if (
-      !Array.isArray(
-        teacherCalls
-      ) ||
-      teacherCalls.length ===
-        0
-    ) {
+    if (!room) {
       return NextResponse.json(
         {
           error:
@@ -1398,8 +1369,6 @@ export async function GET(
     /* =====================================================
        DATABASE
     ===================================================== */
-
-    await connectMongoDB();
 
     /*
      * Delete old duplicate documents where the same

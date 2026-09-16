@@ -1,21 +1,16 @@
-import { COHIVA_CALL_TYPE } from "@/lib/cohivaMeetingConfig";
-
 import {
   auth,
 } from "@/lib/auth/server";
-
-import { getStreamServerClient } from "@/lib/streamServer";
 
 import {
   randomUUID,
 } from "node:crypto";
 
+import { broadcastRtcEvent } from "@/lib/rtc/server";
+
 /* =========================================================
    CONFIG
 ========================================================= */
-
-const CALL_TYPE =
-  COHIVA_CALL_TYPE;
 
 const CLASSROOM_EVENT =
   "cohiva-classroom";
@@ -230,23 +225,17 @@ export async function POST(
     }
 
     /* =====================================================
-       RELAY THROUGH STREAM
+       RELAY THROUGH COHIVA RTC
     ===================================================== */
 
-    const streamClient =
-      getStreamServerClient();
-
-    const call =
-      streamClient.video.call(
-        CALL_TYPE,
-        callId
-      );
-
-    await call.sendCallEvent({
-      custom,
-
-      user_id:
-        userId,
+    await broadcastRtcEvent({
+      callId,
+      event: "custom",
+      data: {
+        custom,
+        user_id:
+          userId,
+      },
     });
 
     return Response.json({
