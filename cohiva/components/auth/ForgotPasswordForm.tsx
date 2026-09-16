@@ -1,0 +1,156 @@
+"use client";
+
+import Link from "next/link";
+import {
+  FormEvent,
+  useState,
+} from "react";
+
+const ForgotPasswordForm = () => {
+  const [email, setEmail] =
+    useState("");
+  const [error, setError] =
+    useState("");
+  const [message, setMessage] =
+    useState("");
+  const [developmentResetUrl, setDevelopmentResetUrl] =
+    useState("");
+  const [submitting, setSubmitting] =
+    useState(false);
+
+  const handleSubmit = async (
+    event: FormEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+
+    if (submitting) {
+      return;
+    }
+
+    setSubmitting(true);
+    setError("");
+    setMessage("");
+    setDevelopmentResetUrl("");
+
+    try {
+      const response =
+        await fetch(
+          "/api/auth/forgot-password",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              email,
+            }),
+          }
+        );
+
+      const data =
+        (await response.json()) as {
+          error?: string;
+          message?: string;
+          developmentResetUrl?: string;
+        };
+
+      if (!response.ok) {
+        setError(
+          data.error ||
+            "Unable to prepare a password reset."
+        );
+        return;
+      }
+
+      setMessage(
+        data.message ||
+          "Check your email for password reset instructions."
+      );
+      setDevelopmentResetUrl(
+        data.developmentResetUrl ||
+          ""
+      );
+    } catch {
+      setError(
+        "Unable to reach Cohiva. Check your connection and try again."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form
+      method="post"
+      onSubmit={handleSubmit}
+      className="space-y-5"
+    >
+      <div className="space-y-2">
+        <label
+          htmlFor="email"
+          className="text-sm font-semibold text-[#3D3732]"
+        >
+          Email
+        </label>
+        <input
+          id="email"
+          name="email"
+          type="email"
+          autoComplete="email"
+          required
+          maxLength={320}
+          value={email}
+          onChange={(event) =>
+            setEmail(event.target.value)
+          }
+          className="h-12 w-full rounded-xl border border-[#3D3732]/15 bg-white px-4 text-sm text-[#3D3732] outline-none transition focus:border-[#CC3A63] focus:ring-4 focus:ring-[#CC3A63]/10"
+          placeholder="you@example.com"
+        />
+      </div>
+
+      {error ? (
+        <p
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+        >
+          {error}
+        </p>
+      ) : null}
+
+      {message ? (
+        <div className="rounded-xl border border-[#A2AB73]/35 bg-[#A2AB73]/10 px-4 py-3 text-sm leading-6 text-[#3D3732]">
+          <p>{message}</p>
+
+          {developmentResetUrl ? (
+            <a
+              href={developmentResetUrl}
+              className="mt-3 inline-flex font-bold text-[#CC3A63] underline decoration-[#CC3A63]/30 underline-offset-4 hover:decoration-[#CC3A63]"
+            >
+              Open development reset link
+            </a>
+          ) : null}
+        </div>
+      ) : null}
+
+      <button
+        type="submit"
+        disabled={submitting}
+        className="flex h-12 w-full items-center justify-center rounded-xl bg-[#CC3A63] px-4 text-sm font-bold text-white shadow-[0_8px_20px_rgba(204,58,99,0.22)] transition hover:bg-[#B83258] disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {submitting
+          ? "Preparing reset..."
+          : "Reset password"}
+      </button>
+
+      <Link
+        href="/sign-in"
+        className="flex h-11 w-full items-center justify-center text-sm font-bold text-[#756E64] transition hover:text-[#3D3732]"
+      >
+        Back to sign in
+      </Link>
+    </form>
+  );
+};
+
+export default ForgotPasswordForm;

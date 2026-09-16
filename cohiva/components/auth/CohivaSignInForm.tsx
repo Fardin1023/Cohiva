@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Eye, EyeOff } from "lucide-react";
 import {
   useRouter,
 } from "next/navigation";
@@ -17,6 +18,9 @@ const CohivaSignInForm = () => {
 
   const [password, setPassword] =
     useState("");
+
+  const [showPassword, setShowPassword] =
+    useState(false);
 
   const [error, setError] =
     useState("");
@@ -123,22 +127,39 @@ const CohivaSignInForm = () => {
             Forgot password?
           </Link>
         </div>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-          maxLength={128}
-          value={password}
-          onChange={(event) =>
-            setPassword(
-              event.target.value
-            )
-          }
-          className="h-12 w-full rounded-xl border border-[#3D3732]/15 bg-white px-4 text-sm text-[#3D3732] outline-none transition focus:border-[#CC3A63] focus:ring-4 focus:ring-[#CC3A63]/10"
-          placeholder="Enter your password"
-        />
+        <div className="relative">
+          <input
+            id="password"
+            name="password"
+            type={showPassword ? "text" : "password"}
+            autoComplete="current-password"
+            required
+            maxLength={128}
+            value={password}
+            onChange={(event) =>
+              setPassword(
+                event.target.value
+              )
+            }
+            className="h-12 w-full rounded-xl border border-[#3D3732]/15 bg-white px-4 pr-12 text-sm text-[#3D3732] outline-none transition focus:border-[#CC3A63] focus:ring-4 focus:ring-[#CC3A63]/10"
+            placeholder="Enter your password"
+          />
+          <button
+            type="button"
+            onClick={() =>
+              setShowPassword((value) => !value)
+            }
+            className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-[#756E64] transition hover:text-[#CC3A63] focus:outline-none"
+            aria-label={showPassword ? "Hide password" : "Show password"}
+            aria-pressed={showPassword}
+          >
+            {showPassword ? (
+              <EyeOff className="h-5 w-5" aria-hidden="true" />
+            ) : (
+              <Eye className="h-5 w-5" aria-hidden="true" />
+            )}
+          </button>
+        </div>
       </div>
 
       {error ? (

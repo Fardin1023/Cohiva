@@ -13,6 +13,8 @@ import {
 
 import { Device } from "mediasoup-client";
 
+import { CohivaBrowserMeetingRecorder } from "@/lib/recordings/browserMeetingRecorder";
+
 export type CohivaRtcStatus =
   | "idle"
   | "connecting"
@@ -117,6 +119,10 @@ type CohivaRtcContextValue = {
   individualPermissions: CohivaRtcIndividualPermissions;
   maxParticipants: number;
   timerEndsAt: string | null;
+  recordingActive: boolean;
+  recordingStartedAt: string | null;
+  recordingSaving: boolean;
+  recordingError: string;
   mediaStateByUser: Record<string, CohivaRtcParticipantMediaState>;
   canUseMic: boolean;
   canUseCamera: boolean;
@@ -151,6 +157,8 @@ type CohivaRtcContextValue = {
     durationMinutes: number,
     maxParticipants: number
   ) => Promise<void>;
+  startRecording: () => Promise<void>;
+  stopRecording: () => Promise<void>;
   sendCustomEvent: (
     custom: Record<string, unknown>
   ) => Promise<void>;
@@ -228,6 +236,14 @@ export const CohivaRtcProvider = ({
     useState(20);
   const [timerEndsAt, setTimerEndsAt] =
     useState<string | null>(null);
+  const [recordingActive, setRecordingActive] =
+    useState(false);
+  const [recordingStartedAt, setRecordingStartedAt] =
+    useState<string | null>(null);
+  const [recordingSaving, setRecordingSaving] =
+    useState(false);
+  const [recordingError, setRecordingError] =
+    useState("");
 
   const socketRef = useRef<WebSocket | null>(null);
   const deviceRef = useRef<Device | null>(null);
@@ -261,6 +277,17 @@ export const CohivaRtcProvider = ({
   const eventListenersRef = useRef(
     new Map<string, Set<CohivaRtcEventListener>>()
   );
+  const meetingRecorderRef = useRef<CohivaBrowserMeetingRecorder | null>(null);
+  const recordingFinalizePromiseRef = useRef<Promise<void> | null>(null);
+  const participantsSnapshotRef = useRef(participants);
+  const remoteMediaSnapshotRef = useRef(remoteMedia);
+  const localCameraSnapshotRef = useRef(localCameraStream);
+  const localScreenSnapshotRef = useRef(localScreenStream);
+
+  participantsSnapshotRef.current = participants;
+  remoteMediaSnapshotRef.current = remoteMedia;
+  localCameraSnapshotRef.current = localCameraStream;
+  localScreenSnapshotRef.current = localScreenStream;
 
   const subscribeEvent = useCallback(
     (
@@ -1135,6 +1162,139 @@ export const CohivaRtcProvider = ({
     setRemoteMedia({});
   }, []);
 
+  const finalizeLocalRecording = useCallback(
+    async (notifyRtc = true) => {
+      if (recordingFinalizePromiseRef.current) {
+        return recordingFinalizePromiseRef.current;
+      }
+
+      const task = (async () => {
+        const recorder = meetingRecorderRef.current;
+
+        if (!recorder) {
+          if (notifyRtc && selfRole === "host") {
+            await request("setRecordingState", { active: false }).catch(() => {});
+          }
+          setRecordingActive(false);
+          setRecordingStartedAt(null);
+          return;
+        }
+
+        meetingRecorderRef.current = null;
+        setRecordingSaving(true);
+        setRecordingError("");
+
+        if (notifyRtc) {
+          await request("setRecordingState", { active: false }).catch(() => {});
+        }
+
+        setRecordingActive(false);
+        setRecordingStartedAt(null);
+
+        try {
+          const { blob, durationMs } = await recorder.stop();
+          if (!blob.size) {
+            throw new Error("The recording did not contain any media.");
+          }
+
+          const response = await fetch(
+            `/api/recordings/upload?callId=${encodeURIComponent(callId)}`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": blob.type || "video/webm",
+                "X-Cohiva-Duration-Ms": String(durationMs),
+              },
+              body: blob,
+            }
+          );
+
+          const result = await response.json().catch(() => null);
+          if (!response.ok) {
+            throw new Error(result?.error || "Cohiva could not save the recording.");
+          }
+
+          setTransientNotice("Recording saved to your Cohiva recordings.");
+        } catch (saveError) {
+          const message = safeErrorMessage(
+            saveError,
+            "Cohiva could not save the recording."
+          );
+          setRecordingError(message);
+          setTransientNotice(message);
+        } finally {
+          setRecordingSaving(false);
+        }
+      })();
+
+      recordingFinalizePromiseRef.current = task;
+      try {
+        await task;
+      } finally {
+        recordingFinalizePromiseRef.current = null;
+      }
+    },
+    [callId, request, selfRole, setTransientNotice]
+  );
+
+  const startRecording = useCallback(async () => {
+    if (selfRole !== "host") {
+      throw new Error("Only the meeting host can start a recording.");
+    }
+    if (status !== "joined") {
+      throw new Error("Join the meeting before starting a recording.");
+    }
+    if (recordingSaving) {
+      throw new Error("Please wait for the previous recording to finish saving.");
+    }
+    if (meetingRecorderRef.current?.isActive()) return;
+
+    setRecordingError("");
+
+    const recorder = new CohivaBrowserMeetingRecorder(() => ({
+      participants: participantsSnapshotRef.current,
+      selfUserId,
+      localCameraStream: localCameraSnapshotRef.current,
+      localScreenStream: localScreenSnapshotRef.current,
+      localMicrophoneTrack:
+        microphoneProducerRef.current?.track?.readyState === "live"
+          ? microphoneProducerRef.current.track
+          : null,
+      remoteMedia: remoteMediaSnapshotRef.current,
+    }));
+
+    try {
+      await recorder.start();
+      meetingRecorderRef.current = recorder;
+
+      const result = await request("setRecordingState", { active: true });
+      setRecordingActive(result?.active === true);
+      setRecordingStartedAt(
+        typeof result?.startedAt === "string"
+          ? result.startedAt
+          : new Date().toISOString()
+      );
+      setTransientNotice("Recording started. Participants can see the recording indicator.");
+    } catch (recordingStartError) {
+      meetingRecorderRef.current = null;
+      await recorder.stop().catch(() => null);
+      const message = safeErrorMessage(
+        recordingStartError,
+        "Cohiva could not start recording."
+      );
+      setRecordingError(message);
+      setTransientNotice(message);
+      throw new Error(message);
+    }
+  }, [recordingSaving, request, selfRole, selfUserId, setTransientNotice, status]);
+
+  const stopRecording = useCallback(async () => {
+    if (selfRole !== "host") {
+      throw new Error("Only the meeting host can stop a recording.");
+    }
+    await finalizeLocalRecording(true);
+  }, [finalizeLocalRecording, selfRole]);
+
   const scheduleReconnect = useCallback(() => {
     if (
       manualDisconnectRef.current ||
@@ -1176,6 +1336,10 @@ export const CohivaRtcProvider = ({
 
     reconnectAttemptRef.current = 0;
 
+    if (selfRole === "host" && meetingRecorderRef.current) {
+      await finalizeLocalRecording(true);
+    }
+
     await stopMicrophone();
     await stopCamera();
     await stopScreenShare();
@@ -1215,7 +1379,13 @@ export const CohivaRtcProvider = ({
     setRemoteMedia({});
     participantNamesRef.current.clear();
     setStatus("idle");
-  }, [stopCamera, stopMicrophone, stopScreenShare]);
+  }, [
+    finalizeLocalRecording,
+    selfRole,
+    stopCamera,
+    stopMicrophone,
+    stopScreenShare,
+  ]);
 
   const applyPrejoinPreferences = useCallback(
     async () => {
@@ -1501,6 +1671,16 @@ export const CohivaRtcProvider = ({
               return;
             }
 
+            if (message.event === "cohiva.recording-state") {
+              setRecordingActive(message.data?.active === true);
+              setRecordingStartedAt(
+                typeof message.data?.startedAt === "string"
+                  ? message.data.startedAt
+                  : null
+              );
+              return;
+            }
+
             if (message.event === "cohiva.kicked") {
               manualDisconnectRef.current = true;
               setError(
@@ -1515,6 +1695,9 @@ export const CohivaRtcProvider = ({
 
             if (message.event === "call.ended") {
               manualDisconnectRef.current = true;
+              if (meetingRecorderRef.current) {
+                void finalizeLocalRecording(false);
+              }
               setStatus("ended");
               socket.close(4000, "Meeting ended");
               return;
@@ -1575,6 +1758,12 @@ export const CohivaRtcProvider = ({
             setTimerEndsAt(
               typeof joined.timerEndsAt === "string"
                 ? joined.timerEndsAt
+                : null
+            );
+            setRecordingActive(joined.recordingActive === true);
+            setRecordingStartedAt(
+              typeof joined.recordingStartedAt === "string"
+                ? joined.recordingStartedAt
                 : null
             );
 
@@ -1674,6 +1863,7 @@ export const CohivaRtcProvider = ({
       applyPrejoinPreferences,
       callId,
       consumeProducer,
+      finalizeLocalRecording,
       ensureRecvTransport,
       emitEvent,
       refreshDevices,
@@ -1686,6 +1876,7 @@ export const CohivaRtcProvider = ({
       startMicrophone,
       stopCamera,
       stopMicrophone,
+      stopRecording,
       stopScreenShare,
     ]
   );
@@ -1870,8 +2061,25 @@ export const CohivaRtcProvider = ({
   );
 
   const endMeeting = useCallback(async () => {
+    if (selfRole === "host" && meetingRecorderRef.current) {
+      await finalizeLocalRecording(true);
+    }
     await request("endMeeting", {});
-  }, [request]);
+  }, [finalizeLocalRecording, request, selfRole]);
+
+  useEffect(() => {
+    if (!recordingActive || selfRole !== "host" || !meetingRecorderRef.current) {
+      return;
+    }
+
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [recordingActive, selfRole]);
 
   const selfIndividual =
     individualPermissions[selfUserId] ?? {};
@@ -1964,6 +2172,10 @@ export const CohivaRtcProvider = ({
       individualPermissions,
       maxParticipants,
       timerEndsAt,
+      recordingActive,
+      recordingStartedAt,
+      recordingSaving,
+      recordingError,
       mediaStateByUser,
       canUseMic,
       canUseCamera,
@@ -1985,6 +2197,8 @@ export const CohivaRtcProvider = ({
       updateRoomPermission,
       setIndividualPermission,
       updateLimits,
+      startRecording,
+      stopRecording,
       sendCustomEvent,
       subscribeEvent,
     }),
@@ -2005,6 +2219,10 @@ export const CohivaRtcProvider = ({
       maxParticipants,
       mediaStateByUser,
       micOn,
+      recordingActive,
+      recordingError,
+      recordingSaving,
+      recordingStartedAt,
       moderateParticipant,
       muteOthers,
       notice,
@@ -2024,10 +2242,12 @@ export const CohivaRtcProvider = ({
       setSelectedVideoInput,
       startCamera,
       startMicrophone,
+      startRecording,
       startScreenShare,
       status,
       stopCamera,
       stopMicrophone,
+      stopRecording,
       stopScreenShare,
       timerEndsAt,
       toggleCamera,

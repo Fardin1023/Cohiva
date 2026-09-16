@@ -8,6 +8,7 @@ import { useUser } from "@/components/providers/AuthProvider";
 import { CohivaRtcProvider, useCohivaRtc } from "@/components/rtc/CohivaRtcProvider";
 import CohivaRtcStage from "@/components/rtc/CohivaRtcStage";
 import CohivaRtcControls from "@/components/rtc/CohivaRtcControls";
+import CohivaRecordingControl from "@/components/rtc/CohivaRecordingControl";
 import CohivaRtcDeviceSettings from "@/components/rtc/CohivaRtcDeviceSettings";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
@@ -354,6 +355,7 @@ const LiveMeeting = ({ callId, initialPermissions }: { callId: string; initialPe
 
   useEffect(() => {
     if (rtc.status !== "ended") return;
+    if (teacher && (rtc.recordingActive || rtc.recordingSaving)) return;
 
     if (teacher) {
       void fetch("/api/meetings/end", {
@@ -366,7 +368,14 @@ const LiveMeeting = ({ callId, initialPermissions }: { callId: string; initialPe
 
     const timer = window.setTimeout(() => router.replace("/"), 700);
     return () => window.clearTimeout(timer);
-  }, [callId, router, rtc.status, teacher]);
+  }, [
+    callId,
+    router,
+    rtc.recordingActive,
+    rtc.recordingSaving,
+    rtc.status,
+    teacher,
+  ]);
 
   useEffect(() => {
     try { const saved = window.localStorage.getItem("cohiva-accessibility"); if (saved) setAccessibility((current) => ({ ...current, ...JSON.parse(saved) })); } catch {}
@@ -466,13 +475,13 @@ const LiveMeeting = ({ callId, initialPermissions }: { callId: string; initialPe
   return (
     <main className={`relative flex h-dvh w-full flex-col overflow-hidden bg-[#24211F] text-white ${accessibility.highContrast ? "contrast-125" : ""}`}>
       <header className="flex h-[64px] shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-[#302B27] px-3 sm:px-4">
-        <div className="flex min-w-0 items-center gap-2"><button type="button" onClick={() => setParticipantsOpen(true)} className="rounded-lg bg-white/10 px-3 py-2 text-xs font-black">👥 {rtc.participants.length}/{rtc.maxParticipants}</button><MeetingSessionTimer />{raisedHands.size > 0 && <button type="button" onClick={() => setRaisedHandsOpen((current) => !current)} className="rounded-lg bg-[#FACC15] px-3 py-2 text-xs font-black text-[#403A35]">✋ {raisedHands.size}</button>}<div className="flex rounded-xl bg-black/20 p-1"><button type="button" onClick={() => setActiveView("video")} className={`rounded-lg px-3 py-1.5 text-xs font-black ${activeView === "video" ? "bg-[#FFF7EB] text-[#403A35]" : "text-white/60"}`}>🎥 Video</button><button type="button" onClick={() => setActiveView("whiteboard")} className={`rounded-lg px-3 py-1.5 text-xs font-black ${activeView === "whiteboard" ? "bg-[#A2AB73]" : "text-white/60"}`}>✏ Board</button></div></div>
+        <div className="flex min-w-0 items-center gap-2"><button type="button" onClick={() => setParticipantsOpen(true)} className="rounded-lg bg-white/10 px-3 py-2 text-xs font-black">👥 {rtc.participants.length}/{rtc.maxParticipants}</button><MeetingSessionTimer />{rtc.recordingActive && <div className="flex items-center gap-1.5 rounded-lg bg-[#CC3A63] px-3 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-white"><span className="h-2 w-2 animate-pulse rounded-full bg-white" />Recording</div>}{raisedHands.size > 0 && <button type="button" onClick={() => setRaisedHandsOpen((current) => !current)} className="rounded-lg bg-[#FACC15] px-3 py-2 text-xs font-black text-[#403A35]">✋ {raisedHands.size}</button>}<div className="flex rounded-xl bg-black/20 p-1"><button type="button" onClick={() => setActiveView("video")} className={`rounded-lg px-3 py-1.5 text-xs font-black ${activeView === "video" ? "bg-[#FFF7EB] text-[#403A35]" : "text-white/60"}`}>🎥 Video</button><button type="button" onClick={() => setActiveView("whiteboard")} className={`rounded-lg px-3 py-1.5 text-xs font-black ${activeView === "whiteboard" ? "bg-[#A2AB73]" : "text-white/60"}`}>✏ Board</button></div></div>
         <div className="flex shrink-0 items-center gap-1.5"><button type="button" onClick={() => setChatOpen(true)} className="relative rounded-lg bg-white/10 px-3 py-2 text-xs">💬{chatUnreadCount > 0 && <span className="absolute -right-2 -top-2 rounded-full bg-[#CC3A63] px-1.5 text-[8px] font-black">{chatUnreadCount}</span>}</button><button type="button" onClick={() => void toggleHand()} className={`rounded-lg px-3 py-2 text-xs ${myHandRaised ? "bg-[#FACC15] text-[#403A35]" : "bg-white/10"}`}>✋</button><div className="relative"><button type="button" onClick={() => setReactionMenuOpen((current) => !current)} className="rounded-lg bg-white/10 px-3 py-2 text-xs">😀</button>{reactionMenuOpen && <div className="absolute right-0 top-[44px] z-[230] flex gap-1 rounded-2xl bg-[#FFF7EB] p-2 shadow-2xl">{["👍","👏","❤️","😂","🎉"].map((emoji) => <button key={emoji} type="button" onClick={() => void sendReaction(emoji)} className="h-10 w-10 rounded-xl text-xl">{emoji}</button>)}</div>}</div><button type="button" onClick={() => setDeviceSettingsOpen(true)} className="rounded-lg bg-white/10 px-3 py-2 text-xs">🎛</button><button type="button" onClick={() => setAccessibilityOpen(true)} className="rounded-lg bg-white/10 px-3 py-2 text-xs">♿</button>{teacher && <button type="button" onClick={() => setAttendanceOpen(true)} className="rounded-lg bg-white/10 px-3 py-2 text-xs">📋</button>}{teacher && <button type="button" onClick={() => setPermissionsOpen(true)} className="rounded-lg bg-[#A2AB73]/20 px-3 py-2 text-xs">⚙</button>}<button type="button" onClick={() => void copyInvite()} className="rounded-lg bg-white/10 px-3 py-2 text-xs font-black">{copied ? "✓" : "Invite"}</button></div>
       </header>
 
       <section className="min-h-0 flex-1 overflow-hidden p-2 sm:p-3"><div className="relative h-full overflow-hidden rounded-[20px] bg-[#181614]"><div className={`absolute inset-0 ${activeView === "video" ? "visible opacity-100" : "invisible pointer-events-none opacity-0"}`}><CohivaRtcStage /></div>{whiteboardMounted && <div className={`absolute inset-0 ${activeView === "whiteboard" ? "visible opacity-100" : "invisible pointer-events-none opacity-0"}`}><CohivaWhiteboard callId={callId} active={activeView === "whiteboard"} /></div>}<MeetingCaptionsOverlay visible={accessibility.captionsVisible} size={accessibility.captionSize} />{!accessibility.hideReactions && <div className="pointer-events-none absolute inset-x-0 bottom-6 z-[80] flex flex-col items-center gap-2">{floatingReactions.map((reaction) => <div key={reaction.id} className="rounded-full bg-[#FFF7EB] px-4 py-2 text-sm font-black text-[#403A35]"><span className="mr-2 text-xl">{reaction.emoji}</span>{reaction.name}</div>)}</div>}</div></section>
 
-      <footer className="flex h-[76px] shrink-0 items-center justify-center border-t border-white/10 bg-[#302B27] px-3"><div className="flex items-center gap-2"><CohivaRtcControls onOpenDevices={() => setDeviceSettingsOpen(true)} /><CohivaLeaveCallControl /></div></footer>
+      <footer className="flex h-[76px] shrink-0 items-center justify-center border-t border-white/10 bg-[#302B27] px-3"><div className="flex items-center gap-2"><CohivaRtcControls onOpenDevices={() => setDeviceSettingsOpen(true)} /><CohivaRecordingControl /><CohivaLeaveCallControl /></div></footer>
 
       {teacher && <MeetingJoinRequests callId={callId} />}
       <MeetingPermissionsPanel callId={callId} open={permissionsOpen} onClose={() => setPermissionsOpen(false)} />

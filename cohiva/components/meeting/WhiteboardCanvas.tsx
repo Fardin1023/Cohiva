@@ -68,7 +68,7 @@ const WHITEBOARD_EVENT =
   "cohiva-whiteboard";
 
 const CHUNK_SIZE =
-  900;
+  2800;
 
 const DRAW_SYNC_DELAY =
   90;
@@ -372,6 +372,12 @@ const WhiteboardCanvas = ({
     useState<WhiteboardTool>(
       "pen"
     );
+
+  const [
+    apiReady,
+    setApiReady,
+  ] =
+    useState(false);
 
   const [
     initialBoardLoaded,
@@ -1101,13 +1107,11 @@ const WhiteboardCanvas = ({
   useEffect(() => {
     if (
       !active ||
+      !apiReady ||
       boardLoadedRef.current
     ) {
       return;
     }
-
-    boardLoadedRef.current =
-      true;
 
     let cancelled =
       false;
@@ -1181,8 +1185,19 @@ const WhiteboardCanvas = ({
           );
         } finally {
           if (
-            !cancelled
+            !cancelled &&
+            apiRef.current
           ) {
+            /*
+             * IMPORTANT: only mark the initial board cycle complete
+             * after Excalidraw has actually exposed its imperative API.
+             * The previous implementation could finish this cycle while
+             * apiRef.current was still null, permanently discarding the
+             * teacher's pre-existing scene for a late-opening student.
+             */
+            boardLoadedRef.current =
+              true;
+
             setInitialBoardLoaded(
               true
             );
@@ -1208,6 +1223,7 @@ const WhiteboardCanvas = ({
     };
   }, [
     active,
+    apiReady,
     callId,
   ]);
 
@@ -1390,7 +1406,11 @@ const WhiteboardCanvas = ({
   ===================================================== */
 
   useEffect(() => {
-    if (!rtc) {
+    if (
+      !rtc ||
+      !apiReady ||
+      !initialBoardLoaded
+    ) {
       return;
     }
 
@@ -1658,6 +1678,8 @@ const WhiteboardCanvas = ({
     };
   }, [
     rtc,
+    apiReady,
+    initialBoardLoaded,
     isTeacher,
     applyRemoteElements,
     sendFullSnapshot,
@@ -1666,18 +1688,31 @@ const WhiteboardCanvas = ({
   /* =====================================================
      STUDENT INITIAL SYNC
 
-     Happens only after the student
-     actually opens Whiteboard.
+     A student may open Whiteboard long after the teacher
+     has already drawn. Realtime RTC events only cover
+     events seen while this client is subscribed, so use
+     two recovery paths:
+
+     1. ask the teacher for a full live snapshot; and
+     2. shortly afterwards read the authoritative board
+        stored by Cohiva in MongoDB.
+
+     The database fallback also covers a missed snapshot
+     event during reconnect / tab mounting.
   ===================================================== */
 
   useEffect(() => {
     if (
       !active ||
+      !apiReady ||
       isTeacher ||
       !initialBoardLoaded
     ) {
       return;
     }
+
+    let cancelled =
+      false;
 
     setSyncing(
       true
@@ -1687,7 +1722,76 @@ const WhiteboardCanvas = ({
       ""
     );
 
-    const timer =
+    const loadAuthoritativeBoard =
+      async () => {
+        try {
+          const response =
+            await fetch(
+              `/api/meetings/whiteboard-state?callId=${encodeURIComponent(
+                callId
+              )}`,
+              {
+                cache:
+                  "no-store",
+              }
+            );
+
+          if (
+            !response.ok ||
+            cancelled
+          ) {
+            return;
+          }
+
+          const result =
+            await response.json();
+
+          const elements =
+            readStoredElements(
+              result
+            );
+
+          if (
+            cancelled ||
+            !elements
+          ) {
+            return;
+          }
+
+          applyRemoteElements(
+            elements,
+            true
+          );
+
+          setSyncing(
+            false
+          );
+
+          setSyncError(
+            ""
+          );
+
+          if (
+            syncTimeoutRef.current
+          ) {
+            clearTimeout(
+              syncTimeoutRef.current
+            );
+
+            syncTimeoutRef.current =
+              null;
+          }
+        } catch (
+          fallbackError
+        ) {
+          console.error(
+            "Whiteboard authoritative sync error:",
+            fallbackError
+          );
+        }
+      };
+
+    const requestTimer =
       window.setTimeout(
         () => {
           void relayWhiteboardEvents([
@@ -1703,23 +1807,48 @@ const WhiteboardCanvas = ({
                 "Whiteboard sync request error:",
                 syncRequestError
               );
-
-              setSyncing(
-                false
-              );
-
-              setSyncError(
-                "Unable to sync the board."
-              );
             }
           );
         },
-        200
+        120
+      );
+
+    /*
+     * Give the teacher snapshot a brief chance to arrive.
+     * If it does not, MongoDB already contains every
+     * accepted element delta and gives this late joiner the
+     * same board state.
+     */
+    const fallbackTimer =
+      window.setTimeout(
+        () => {
+          void loadAuthoritativeBoard();
+        },
+        650
+      );
+
+    /*
+     * A larger freehand board can take a little longer to
+     * serialize, persist and broadcast. Retry once more so
+     * a late opener cannot remain on an older empty copy.
+     */
+    const secondFallbackTimer =
+      window.setTimeout(
+        () => {
+          void loadAuthoritativeBoard();
+        },
+        1700
       );
 
     syncTimeoutRef.current =
       setTimeout(
         () => {
+          if (
+            cancelled
+          ) {
+            return;
+          }
+
           setSyncing(
             false
           );
@@ -1728,15 +1857,29 @@ const WhiteboardCanvas = ({
       );
 
     return () => {
+      cancelled =
+        true;
+
       clearTimeout(
-        timer
+        requestTimer
+      );
+
+      clearTimeout(
+        fallbackTimer
+      );
+
+      clearTimeout(
+        secondFallbackTimer
       );
     };
   }, [
     active,
+    apiReady,
+    callId,
     isTeacher,
     initialBoardLoaded,
     relayWhiteboardEvents,
+    applyRemoteElements,
   ]);
 
   /* =====================================================
@@ -2567,6 +2710,10 @@ const WhiteboardCanvas = ({
      */
     apiRef.current =
       api;
+
+    setApiReady(
+      true
+    );
   }}
           onChange={
             handleChange

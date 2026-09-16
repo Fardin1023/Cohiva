@@ -1,5 +1,6 @@
 "use client";
 
+import { Eye, EyeOff } from "lucide-react";
 import {
   useRouter,
 } from "next/navigation";
@@ -21,6 +22,10 @@ const CohivaSignUpForm = () => {
     useState("");
   const [confirmPassword, setConfirmPassword] =
     useState("");
+  const [showPassword, setShowPassword] =
+    useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] =
+    useState(false);
   const [error, setError] =
     useState("");
   const [submitting, setSubmitting] =
@@ -178,23 +183,40 @@ const CohivaSignUpForm = () => {
         >
           Password
         </label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="new-password"
-          required
-          minLength={8}
-          maxLength={128}
-          value={password}
-          onChange={(event) =>
-            setPassword(
-              event.target.value
-            )
-          }
-          className={inputClass}
-          placeholder="At least 8 characters"
-        />
+        <div className="relative">
+          <input
+            id="password"
+            name="password"
+            type={showPassword ? "text" : "password"}
+            autoComplete="new-password"
+            required
+            minLength={8}
+            maxLength={128}
+            value={password}
+            onChange={(event) =>
+              setPassword(
+                event.target.value
+              )
+            }
+            className={`${inputClass} pr-12`}
+            placeholder="At least 8 characters"
+          />
+          <button
+            type="button"
+            onClick={() =>
+              setShowPassword((value) => !value)
+            }
+            className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-[#756E64] transition hover:text-[#CC3A63] focus:outline-none"
+            aria-label={showPassword ? "Hide password" : "Show password"}
+            aria-pressed={showPassword}
+          >
+            {showPassword ? (
+              <EyeOff className="h-5 w-5" aria-hidden="true" />
+            ) : (
+              <Eye className="h-5 w-5" aria-hidden="true" />
+            )}
+          </button>
+        </div>
         <p className="text-xs leading-5 text-[#756E64]">
           Use 8-128 characters with at least one letter and one number.
         </p>
@@ -207,22 +229,39 @@ const CohivaSignUpForm = () => {
         >
           Confirm password
         </label>
-        <input
-          id="confirmPassword"
-          name="confirmPassword"
-          type="password"
-          autoComplete="new-password"
-          required
-          minLength={8}
-          maxLength={128}
-          value={confirmPassword}
-          onChange={(event) =>
-            setConfirmPassword(
-              event.target.value
-            )
-          }
-          className={inputClass}
-        />
+        <div className="relative">
+          <input
+            id="confirmPassword"
+            name="confirmPassword"
+            type={showConfirmPassword ? "text" : "password"}
+            autoComplete="new-password"
+            required
+            minLength={8}
+            maxLength={128}
+            value={confirmPassword}
+            onChange={(event) =>
+              setConfirmPassword(
+                event.target.value
+              )
+            }
+            className={`${inputClass} pr-12`}
+          />
+          <button
+            type="button"
+            onClick={() =>
+              setShowConfirmPassword((value) => !value)
+            }
+            className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-[#756E64] transition hover:text-[#CC3A63] focus:outline-none"
+            aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+            aria-pressed={showConfirmPassword}
+          >
+            {showConfirmPassword ? (
+              <EyeOff className="h-5 w-5" aria-hidden="true" />
+            ) : (
+              <Eye className="h-5 w-5" aria-hidden="true" />
+            )}
+          </button>
+        </div>
       </div>
 
       {error ? (

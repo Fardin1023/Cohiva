@@ -39,7 +39,11 @@ const isPublicAuthPath = (
   pathname === "/sign-in" ||
   pathname.startsWith("/sign-in/") ||
   pathname === "/sign-up" ||
-  pathname.startsWith("/sign-up/");
+  pathname.startsWith("/sign-up/") ||
+  pathname === "/forgot-password" ||
+  pathname.startsWith("/forgot-password/") ||
+  pathname === "/reset-password" ||
+  pathname.startsWith("/reset-password/");
 
 export const AuthProvider = ({
   children,

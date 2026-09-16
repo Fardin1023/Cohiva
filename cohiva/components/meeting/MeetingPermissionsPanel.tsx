@@ -558,11 +558,11 @@ const MeetingPermissionsPanel = ({
                   </p>
 
                   <p className="mt-1 text-[9px] font-black uppercase tracking-wider text-[#CC3A63]">
-                    Temporarily unavailable
+                    Host only
                   </p>
 
                   <p className="mt-1 text-[10px] leading-4 text-[#756E64]">
-                    Recording is disabled while live media is being migrated to Cohiva RTC.
+                    Only the meeting host can start, stop, save, view, or download a recording.
                   </p>
 
                 </div>

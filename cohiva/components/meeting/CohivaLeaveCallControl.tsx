@@ -29,6 +29,9 @@ const CohivaLeaveCallControl = () => {
     try {
       setAction("end");
       setError("");
+      if (rtc.recordingActive || rtc.recordingSaving) {
+        await rtc.stopRecording();
+      }
       const response = await fetch("/api/meetings/end", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

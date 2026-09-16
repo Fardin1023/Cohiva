@@ -34,6 +34,8 @@ type Room = {
   durationTimer: ReturnType<typeof setTimeout> | null;
   emptyTimer: ReturnType<typeof setTimeout> | null;
   ended: boolean;
+  recordingActive: boolean;
+  recordingStartedAt: Date | null;
 };
 
 const SIGNAL_PORT = Number(process.env.COHIVA_RTC_PORT || 4100);
@@ -188,6 +190,8 @@ const createRoom = async (token: RtcTokenPayload): Promise<Room> => {
     durationTimer: null,
     emptyTimer: null,
     ended: false,
+    recordingActive: false,
+    recordingStartedAt: null,
   };
 
   rooms.set(token.callId, room);
@@ -253,6 +257,15 @@ const removePeer = (room: Room, peer: Peer) => {
     room.peers.delete(userId);
   }
 
+  if (wasJoined && peer.token.role === "host" && room.recordingActive) {
+    room.recordingActive = false;
+    room.recordingStartedAt = null;
+    broadcast(room, "cohiva.recording-state", {
+      active: false,
+      startedAt: null,
+    });
+  }
+
   if (wasJoined) {
     broadcast(room, "call.session_participant_left", {
       participant: {
@@ -274,6 +287,12 @@ const endRoom = (room: Room) => {
 
   if (room.durationTimer) clearTimeout(room.durationTimer);
   if (room.emptyTimer) clearTimeout(room.emptyTimer);
+
+  if (room.recordingActive) {
+    room.recordingActive = false;
+    room.recordingStartedAt = null;
+    broadcast(room, "cohiva.recording-state", { active: false, startedAt: null });
+  }
 
   broadcast(room, "call.ended", {});
 
@@ -455,6 +474,8 @@ const handleRequest = async (
       selfRole: peer.token.role,
       permissions: room.permissions,
       individualPermissions: room.individualPermissions,
+      recordingActive: room.recordingActive,
+      recordingStartedAt: room.recordingStartedAt?.toISOString() ?? null,
     };
   }
 
@@ -793,6 +814,32 @@ const handleRequest = async (
 
     broadcast(room, "cohiva.limits-updated", update);
 
+    return { success: true, ...update };
+  }
+
+  if (action === "setRecordingState") {
+    if (peer.token.role !== "host") {
+      throw new Error("Only the host can control meeting recording.");
+    }
+
+    const active = data.active === true;
+
+    if (active) {
+      if (!room.recordingActive) {
+        room.recordingActive = true;
+        room.recordingStartedAt = new Date();
+      }
+    } else {
+      room.recordingActive = false;
+      room.recordingStartedAt = null;
+    }
+
+    const update = {
+      active: room.recordingActive,
+      startedAt: room.recordingStartedAt?.toISOString() ?? null,
+    };
+
+    broadcast(room, "cohiva.recording-state", update);
     return { success: true, ...update };
   }
 
