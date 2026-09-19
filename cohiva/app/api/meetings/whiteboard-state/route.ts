@@ -3,6 +3,7 @@ import {
 } from "@/lib/auth/server";
 
 import connectMongoDB from "@/lib/mongodb";
+import { meetingAuthorizationResponse, requireActiveMeetingParticipant } from "@/lib/meetings/authorization";
 
 import WhiteboardState from "@/models/WhiteboardState";
 
@@ -81,6 +82,8 @@ export async function GET(
        DATABASE
     ===================================================== */
 
+    await requireActiveMeetingParticipant(callId, userId);
+
     await connectMongoDB();
 
     const board =
@@ -141,6 +144,9 @@ export async function GET(
         board.updatedAt,
     });
   } catch (error) {
+    const authorizationResponse = meetingAuthorizationResponse(error);
+    if (authorizationResponse) return authorizationResponse;
+
     console.error(
       "Load Cohiva whiteboard error:",
       error
@@ -272,44 +278,18 @@ export async function PUT(
        DATABASE
     ===================================================== */
 
+    const { isHost } = await requireActiveMeetingParticipant(callId, userId);
+    if (!isHost) {
+      return Response.json({ error: "Only the meeting host can save the persistent whiteboard." }, { status: 403 });
+    }
+
     await connectMongoDB();
 
     /*
-     * Find existing board.
+     * Persistent board ownership is always the meeting host. Earlier builds
+     * could let the first authenticated caller become the owner; host-only
+     * authorization above intentionally repairs that state on the next save.
      */
-    const existing =
-      await WhiteboardState
-        .findOne({
-          callId,
-        })
-        .select({
-          ownerId: 1,
-        })
-        .lean();
-
-    /*
-     * Once a board has an owner,
-     * another account cannot overwrite
-     * its persistent copy.
-     *
-     * Students still receive live
-     * whiteboard updates through Stream.
-     */
-    if (
-      existing &&
-      existing.ownerId !==
-        userId
-    ) {
-      return Response.json(
-        {
-          error:
-            "Only the whiteboard owner can save this board.",
-        },
-        {
-          status: 403,
-        }
-      );
-    }
 
     const title =
       body.title?.trim() ||
@@ -326,6 +306,8 @@ export async function PUT(
 
         {
           $set: {
+            ownerId: userId,
+
             elements,
 
             title,
@@ -337,10 +319,6 @@ export async function PUT(
               now,
           },
 
-          $setOnInsert: {
-            ownerId:
-              userId,
-          },
         },
 
         {
@@ -365,6 +343,9 @@ export async function PUT(
         board.lastSavedAt,
     });
   } catch (error) {
+    const authorizationResponse = meetingAuthorizationResponse(error);
+    if (authorizationResponse) return authorizationResponse;
+
     console.error(
       "Save Cohiva whiteboard error:",
       error

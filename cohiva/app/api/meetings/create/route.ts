@@ -10,6 +10,7 @@ import connectMongoDB from "@/lib/mongodb";
 import CohivaRtcRoom, {
   DEFAULT_COHIVA_RTC_PERMISSIONS,
 } from "@/models/CohivaRtcRoom";
+import MeetingJoinRequest from "@/models/MeetingJoinRequest";
 
 type MeetingKind = "instant" | "scheduled" | "personal";
 
@@ -81,35 +82,78 @@ export async function POST(request: Request) {
 
     const existing = await CohivaRtcRoom.findOne({ callId });
     if (existing && existing.hostUserId !== userId) {
-      return Response.json({ error: "That meeting ID is already in use." }, { status: 409 });
+      return Response.json(
+        { error: "That meeting ID is already in use." },
+        { status: 409 }
+      );
+    }
+
+    /*
+     * Non-personal meetings are single-use. Once End for Everyone (or the
+     * meeting timer) closes them, even the original host cannot resurrect the
+     * old link by calling the create API again.
+     */
+    if (existing?.endedAt && kind !== "personal") {
+      return Response.json(
+        { error: "This meeting has already ended and cannot be reopened." },
+        { status: 410 }
+      );
+    }
+
+    const now = new Date();
+    const personalSessionExpired = Boolean(
+      existing &&
+        kind === "personal" &&
+        (existing.endedAt ||
+          (existing.timerEndsAt &&
+            new Date(existing.timerEndsAt).getTime() <= now.getTime()))
+    );
+
+    if (personalSessionExpired) {
+      await MeetingJoinRequest.deleteMany({ callId });
+    }
+
+    const update: Record<string, unknown> = {
+      hostUserId: userId,
+      kind,
+      title:
+        title ||
+        (kind === "personal" ? "Personal Cohiva Room" : "Cohiva Meeting"),
+      description:
+        description ||
+        (kind === "personal"
+          ? "Permanent Cohiva personal meeting room"
+          : ""),
+      startsAt,
+      durationMinutes,
+      maxParticipants,
+    };
+
+    if (personalSessionExpired) {
+      Object.assign(update, {
+        memberUserIds: [userId],
+        endedAt: null,
+        startedAt: null,
+        timerEndsAt: null,
+      });
     }
 
     const room = await CohivaRtcRoom.findOneAndUpdate(
       { callId },
       {
-        $set: {
-          hostUserId: userId,
-          kind,
-          title:
-            title ||
-            (kind === "personal" ? "Personal Cohiva Room" : "Cohiva Meeting"),
-          description:
-            description ||
-            (kind === "personal"
-              ? "Permanent Cohiva personal meeting room"
-              : ""),
-          startsAt,
-          durationMinutes,
-          maxParticipants,
-          endedAt: null,
-        },
+        $set: update,
         $setOnInsert: {
           accessMode: "approval",
           permissions: { ...DEFAULT_COHIVA_RTC_PERMISSIONS },
           individualPermissions: {},
           hiddenForUserIds: [],
+          endedAt: null,
+          startedAt: null,
+          timerEndsAt: null,
         },
-        $addToSet: { memberUserIds: userId },
+        ...(!personalSessionExpired
+          ? { $addToSet: { memberUserIds: userId } }
+          : {}),
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     ).lean();
@@ -119,6 +163,8 @@ export async function POST(request: Request) {
       callId: room.callId,
       durationMinutes: room.durationMinutes,
       maxParticipants: room.maxParticipants,
+      startedAt: room.startedAt,
+      timerEndsAt: room.timerEndsAt,
     });
   } catch (error) {
     console.error("Create Cohiva meeting error:", error);

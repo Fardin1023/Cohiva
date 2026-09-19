@@ -21,11 +21,32 @@ export async function GET(request: Request) {
     let extra: Record<string, unknown> = {};
 
     if (scope === "upcoming") {
-      extra = { kind: "scheduled", startsAt: { $gt: now }, endedAt: null };
-    } else if (scope === "previous") {
+      /*
+       * A scheduled meeting remains available even when its planned start time
+       * passes. It disappears only after the actual meeting session ends.
+       */
       extra = {
-        kind: { $ne: "personal" },
-        $or: [{ endedAt: { $ne: null } }, { startsAt: { $ne: null, $lte: now } }],
+        kind: "scheduled",
+        endedAt: null,
+        $or: [
+          { startsAt: { $gt: now }, startedAt: null },
+          {
+            startedAt: { $exists: true, $ne: null },
+            timerEndsAt: { $exists: true, $gt: now },
+          },
+        ],
+      };
+    } else if (scope === "previous") {
+      /*
+       * Product decision: ended meetings are NOT meeting-history items.
+       * Previous therefore contains only missed/unstarted scheduled meetings,
+       * never a meeting that the host actually ended.
+       */
+      extra = {
+        kind: "scheduled",
+        endedAt: null,
+        startedAt: null,
+        startsAt: { $ne: null, $lte: now },
       };
     }
 
@@ -41,6 +62,8 @@ export async function GET(request: Request) {
       description: room.description || "",
       kind: room.kind,
       startsAt: room.startsAt,
+      startedAt: room.startedAt,
+      timerEndsAt: room.timerEndsAt,
       endedAt: room.endedAt,
       updatedAt: room.updatedAt,
       createdAt: room.createdAt,
@@ -53,12 +76,32 @@ export async function GET(request: Request) {
 
     if (scope === "dashboard") {
       const upcoming = items
-        .filter((item) => item.kind === "scheduled" && item.startsAt && new Date(item.startsAt).getTime() > Date.now() && !item.endedAt)
-        .sort((a, b) => new Date(a.startsAt as Date).getTime() - new Date(b.startsAt as Date).getTime())[0] || null;
-      const previousCount = items.filter((item) =>
-        item.kind !== "personal" &&
-        (item.endedAt || (item.startsAt && new Date(item.startsAt).getTime() < Date.now()))
+        .filter(
+          (item) =>
+            item.kind === "scheduled" &&
+            !item.endedAt &&
+            ((item.startsAt &&
+              !item.startedAt &&
+              new Date(item.startsAt as Date).getTime() > Date.now()) ||
+              (Boolean(item.startedAt) &&
+                Boolean(item.timerEndsAt) &&
+                new Date(item.timerEndsAt as Date).getTime() > Date.now()))
+        )
+        .sort((a, b) => {
+          const aTime = a.startsAt ? new Date(a.startsAt as Date).getTime() : Number.MAX_SAFE_INTEGER;
+          const bTime = b.startsAt ? new Date(b.startsAt as Date).getTime() : Number.MAX_SAFE_INTEGER;
+          return aTime - bTime;
+        })[0] || null;
+
+      const previousCount = items.filter(
+        (item) =>
+          item.kind === "scheduled" &&
+          !item.endedAt &&
+          !item.startedAt &&
+          item.startsAt &&
+          new Date(item.startsAt as Date).getTime() <= Date.now()
       ).length;
+
       return Response.json({ success: true, upcoming, previousCount });
     }
 

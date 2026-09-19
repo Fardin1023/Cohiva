@@ -8,6 +8,7 @@ import {
   type RtcTokenPayload,
   verifyRtcToken,
 } from "../lib/rtc/token";
+import { finalizeMeetingInDatabase } from "../lib/meetings/lifecycle";
 
 type JsonObject = Record<string, any>;
 
@@ -185,8 +186,8 @@ const createRoom = async (token: RtcTokenPayload): Promise<Room> => {
     individualPermissions: normalizeIndividualPermissions(token.custom),
     maxParticipants: token.maxParticipants,
     durationMinutes: token.durationMinutes,
-    startedAt: null,
-    timerEndsAt: null,
+    startedAt: token.startedAt ? new Date(token.startedAt) : null,
+    timerEndsAt: token.timerEndsAt ? new Date(token.timerEndsAt) : null,
     durationTimer: null,
     emptyTimer: null,
     ended: false,
@@ -195,6 +196,16 @@ const createRoom = async (token: RtcTokenPayload): Promise<Room> => {
   };
 
   rooms.set(token.callId, room);
+
+  if (room.timerEndsAt) {
+    const remaining = room.timerEndsAt.getTime() - Date.now();
+    if (remaining <= 0) {
+      setTimeout(() => endRoom(room), 0);
+    } else {
+      room.durationTimer = setTimeout(() => endRoom(room), Math.max(1_000, remaining));
+    }
+  }
+
   return room;
 };
 
@@ -203,6 +214,25 @@ const getOrCreateRoom = async (token: RtcTokenPayload) => {
   if (existing && !existing.ended) {
     existing.maxParticipants = token.maxParticipants;
     existing.durationMinutes = token.durationMinutes;
+
+    if (token.startedAt) {
+      existing.startedAt = new Date(token.startedAt);
+    }
+    if (token.timerEndsAt) {
+      const nextTimerEndsAt = new Date(token.timerEndsAt);
+      const timerChanged =
+        !existing.timerEndsAt ||
+        existing.timerEndsAt.getTime() !== nextTimerEndsAt.getTime();
+      existing.timerEndsAt = nextTimerEndsAt;
+      if (timerChanged) {
+        if (existing.durationTimer) clearTimeout(existing.durationTimer);
+        existing.durationTimer = setTimeout(
+          () => endRoom(existing),
+          Math.max(1_000, nextTimerEndsAt.getTime() - Date.now())
+        );
+      }
+    }
+
     if (token.role === "host") {
       existing.permissions = normalizePermissions(token.custom);
       existing.individualPermissions = normalizeIndividualPermissions(token.custom);
@@ -285,8 +315,21 @@ const endRoom = (room: Room) => {
   if (room.ended) return;
   room.ended = true;
 
+  const endedAt = room.timerEndsAt && room.timerEndsAt.getTime() <= Date.now()
+    ? room.timerEndsAt
+    : new Date();
+
   if (room.durationTimer) clearTimeout(room.durationTimer);
   if (room.emptyTimer) clearTimeout(room.emptyTimer);
+
+  /*
+   * Persist the terminal state from the RTC process too. This is essential
+   * for duration-based endings: without it the WebSocket room would close
+   * but the old meeting link could create a fresh RTC room afterwards.
+   */
+  void finalizeMeetingInDatabase(room.id, endedAt).catch((error) => {
+    console.error("Unable to persist RTC meeting end:", error);
+  });
 
   if (room.recordingActive) {
     room.recordingActive = false;
@@ -294,7 +337,7 @@ const endRoom = (room: Room) => {
     broadcast(room, "cohiva.recording-state", { active: false, startedAt: null });
   }
 
-  broadcast(room, "call.ended", {});
+  broadcast(room, "call.ended", { endedAt: endedAt.toISOString() });
 
   for (const peer of room.peers.values()) {
     closePeerMedia(peer);
@@ -434,13 +477,20 @@ const handleRequest = async (
       peer.joined = true;
 
       if (!room.startedAt) {
+        if (peer.token.role !== "host") {
+          peer.joined = false;
+          throw new Error("The host has not started this meeting yet.");
+        }
+
+        /* Backward-compatible fallback. New tokens already carry the
+           MongoDB-backed session timestamps. */
         room.startedAt = new Date();
         room.timerEndsAt = new Date(
           room.startedAt.getTime() + room.durationMinutes * 60_000
         );
         room.durationTimer = setTimeout(
           () => endRoom(room),
-          Math.max(1_000, room.durationMinutes * 60_000)
+          Math.max(1_000, room.timerEndsAt.getTime() - Date.now())
         );
       }
 

@@ -52,6 +52,8 @@ type RoomMetadata = {
   title: string;
   description: string;
   startsAt: string | null;
+  startedAt: string | null;
+  timerEndsAt: string | null;
   accessMode: MeetingAccessMode;
   durationMinutes: number;
   maxParticipants: number;
@@ -129,6 +131,7 @@ const MeetingLobby = ({ callId, room, onJoined }: { callId: string; room: RoomMe
   const router = useRouter();
   const { user } = useUser();
   const [accessMode, setAccessMode] = useState<MeetingAccessMode>(room.accessMode || "approval");
+  const [meetingStarted, setMeetingStarted] = useState(Boolean(room.startedAt));
   const [accessStatus, setAccessStatus] = useState<AccessStatus>("idle");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
@@ -204,11 +207,70 @@ const MeetingLobby = ({ callId, room, onJoined }: { callId: string; room: RoomMe
     try {
       const response = await fetch(`/api/meetings/access?callId=${encodeURIComponent(callId)}`, { cache: "no-store" });
       const result = await response.json();
-      if (response.ok) setAccessMode(result.mode === "open" || result.mode === "locked" ? result.mode : "approval");
+
+      if (response.status === 410 || result?.ended) {
+        setMeetingStarted(false);
+        setAccessStatus("denied");
+        setError("This Cohiva meeting has ended.");
+        return;
+      }
+
+      if (response.ok) {
+        const nextMode = result.mode === "open" || result.mode === "locked" ? result.mode : "approval";
+        setAccessMode(nextMode);
+        setMeetingStarted(Boolean(result.started));
+        if (nextMode === "open") {
+          setAccessStatus((current) => current === "denied" ? "idle" : current);
+          setError((current) => current.includes("did not approve") ? "" : current);
+        }
+      }
     } catch {}
   }, [callId]);
 
   useSmartPolling(loadAccess, { enabled: !room.teacher, intervalMs: 2500 });
+
+  /* Restore waiting-room/admission state after a refresh. */
+  useEffect(() => {
+    if (room.teacher) return;
+    let cancelled = false;
+
+    const restoreAccessState = async () => {
+      try {
+        const response = await fetch(
+          `/api/meetings/join-request?callId=${encodeURIComponent(callId)}&scope=mine`,
+          { cache: "no-store" }
+        );
+        const result = await response.json().catch(() => null);
+        if (cancelled) return;
+
+        if (response.status === 410 || result?.ended) {
+          setAccessStatus("denied");
+          setError("This Cohiva meeting has ended.");
+          return;
+        }
+
+        if (!response.ok || !result) return;
+        setMeetingStarted(Boolean(result.started));
+        if (result.accessMode === "open" || result.accessMode === "locked" || result.accessMode === "approval") {
+          setAccessMode(result.accessMode);
+        }
+
+        if (result.status === "pending") {
+          setAccessStatus("waiting");
+        } else if (result.status === "approved" || result.admitted === true) {
+          setAccessStatus("approved");
+        } else if (result.status === "denied") {
+          setAccessStatus("denied");
+          setError("The host did not approve this join request.");
+        }
+      } catch {}
+    };
+
+    void restoreAccessState();
+    return () => {
+      cancelled = true;
+    };
+  }, [callId, room.teacher]);
 
   const finishJoin = useCallback(async () => {
     if (joiningRef.current) return;
@@ -241,8 +303,15 @@ const MeetingLobby = ({ callId, room, onJoined }: { callId: string; room: RoomMe
     try {
       const response = await fetch(`/api/meetings/join-request?callId=${encodeURIComponent(callId)}&scope=mine`, { cache: "no-store" });
       const result = await response.json();
+      if (response.status === 410 || result?.ended) {
+        setAccessStatus("denied");
+        setError("This Cohiva meeting has ended.");
+        return;
+      }
       if (!response.ok) return;
-      if (result.status === "approved") await finishJoin();
+      setMeetingStarted(Boolean(result.started));
+      if (result.status === "approved" && result.started) await finishJoin();
+      if (result.status === "approved" && !result.started) setAccessStatus("approved");
       if (result.status === "denied") { setAccessStatus("denied"); setError("The host did not approve this join request."); }
     } catch {}
   }, [accessStatus, callId, finishJoin]);
@@ -250,20 +319,40 @@ const MeetingLobby = ({ callId, room, onJoined }: { callId: string; room: RoomMe
   useSmartPolling(checkWaitingStatus, { enabled: accessStatus === "waiting", intervalMs: 1200 });
 
   useEffect(() => {
-    if (accessStatus === "waiting" && accessMode === "open") {
+    if (accessStatus === "waiting" && accessMode === "open" && meetingStarted) {
       void finishJoin();
     }
     if (accessStatus === "waiting" && accessMode === "locked") {
       setAccessStatus("idle");
       setError("The host locked this meeting.");
     }
-  }, [accessMode, accessStatus, finishJoin]);
+  }, [accessMode, accessStatus, finishJoin, meetingStarted]);
 
   const joinMeeting = async () => {
     if (!user || joiningRef.current) return;
     setError("");
-    if (room.teacher || accessMode === "open") { await finishJoin(); return; }
-    if (accessMode === "locked") { setError("This meeting is currently locked by the host."); return; }
+    if (room.teacher) { await finishJoin(); return; }
+    if (accessMode === "locked" && accessStatus !== "approved") {
+      setError("This meeting is currently locked by the host.");
+      return;
+    }
+    if (accessStatus === "approved") {
+      if (!meetingStarted) {
+        setError("You are approved. Waiting for the host to start the meeting.");
+        return;
+      }
+      await finishJoin();
+      return;
+    }
+    if (accessMode === "open") {
+      if (!meetingStarted) {
+        setAccessStatus("waiting");
+        setError("Waiting for the host to start the meeting.");
+        return;
+      }
+      await finishJoin();
+      return;
+    }
     try {
       setAccessStatus("requesting");
       const response = await fetch("/api/meetings/join-request", {
@@ -272,8 +361,16 @@ const MeetingLobby = ({ callId, room, onJoined }: { callId: string; room: RoomMe
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to send join request.");
-      if (result.status === "approved" || result.status === "open") { await finishJoin(); return; }
+      if ((result.status === "approved" || result.status === "open") && result.started !== false) { await finishJoin(); return; }
+      if (result.status === "approved") {
+        setAccessStatus("approved");
+        setError("You are approved. Waiting for the host to start the meeting.");
+        return;
+      }
       setAccessStatus("waiting");
+      if (result.status === "waiting-host") {
+        setError("Waiting for the host to start the meeting.");
+      }
     } catch (requestError) {
       setAccessStatus("idle");
       setError(requestError instanceof Error ? requestError.message : "Unable to send join request.");
@@ -310,11 +407,22 @@ const MeetingLobby = ({ callId, room, onJoined }: { callId: string; room: RoomMe
 
           {room.teacher && <div className="mt-5 space-y-4"><MeetingAccessSettings callId={callId} /><MeetingLimitsSettings callId={callId} compact /></div>}
 
-          {accessStatus === "waiting" && <div className="mt-5 rounded-2xl bg-[#A2AB73]/15 p-4 text-sm font-bold text-[#66703F]">Waiting for the host to approve your request…</div>}
+          {accessStatus === "waiting" && <div className="mt-5 rounded-2xl bg-[#A2AB73]/15 p-4 text-sm font-bold text-[#66703F]">{accessMode === "open" && !meetingStarted ? "Waiting for the host to start the meeting…" : "Waiting for the host to approve your request…"}</div>}
+          {accessStatus === "approved" && !meetingStarted && <div className="mt-5 rounded-2xl bg-[#A2AB73]/15 p-4 text-sm font-bold text-[#66703F]">Approved ✓ Waiting for the host to start the meeting…</div>}
           {error && <div className="mt-5 rounded-2xl bg-[#CC3A63]/10 p-4 text-sm font-bold text-[#CC3A63]">{error}</div>}
 
-          <button type="button" disabled={accessStatus === "requesting" || accessStatus === "waiting"} onClick={() => void joinMeeting()} className="mt-6 w-full rounded-2xl bg-[#CC3A63] px-5 py-4 font-black text-white disabled:opacity-50">
-            {accessStatus === "requesting" ? "Requesting…" : accessStatus === "waiting" ? "Waiting for approval" : room.teacher ? "Start meeting" : accessMode === "approval" ? "Ask to join" : "Join meeting"}
+          <button type="button" disabled={accessStatus === "requesting" || accessStatus === "waiting" || accessStatus === "denied"} onClick={() => void joinMeeting()} className="mt-6 w-full rounded-2xl bg-[#CC3A63] px-5 py-4 font-black text-white disabled:opacity-50">
+            {accessStatus === "requesting"
+              ? "Requesting…"
+              : accessStatus === "waiting"
+                ? accessMode === "open" && !meetingStarted ? "Waiting for host" : "Waiting for approval"
+                : room.teacher
+                  ? room.startedAt ? "Rejoin meeting" : "Start meeting"
+                  : accessStatus === "approved"
+                    ? meetingStarted ? "Join meeting" : "Approved — waiting for host"
+                    : accessMode === "approval"
+                      ? "Ask to join"
+                      : meetingStarted ? "Join meeting" : "Waiting for host"}
           </button>
           <div className="mt-3 grid grid-cols-2 gap-3"><button type="button" onClick={() => void copyInvite()} className="rounded-2xl bg-[#403A35]/10 p-3 text-xs font-black">{copied ? "Copied ✓" : "Copy invite"}</button><button type="button" onClick={() => router.replace("/")} className="rounded-2xl bg-[#403A35]/10 p-3 text-xs font-black">Back home</button></div>
         </section>
@@ -331,6 +439,8 @@ const LiveMeeting = ({ callId, initialPermissions }: { callId: string; initialPe
   const userName = user?.fullName || user?.username || user?.firstName || "Participant";
   const userImage = user?.imageUrl || "";
   const teacher = rtc.selfRole === "host";
+
+
   const [permissions, setPermissions] = useState<CohivaPermissions>({ ...DEFAULT_COHIVA_PERMISSIONS, ...initialPermissions, studentRecording: false });
   const [activeView, setActiveView] = useState<MeetingView>("video");
   const [whiteboardMounted, setWhiteboardMounted] = useState(false);
@@ -401,7 +511,7 @@ const LiveMeeting = ({ callId, initialPermissions }: { callId: string; initialPe
   }), [rtc]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || rtc.status !== "joined") return;
     const payload = { callId, name: userName, image: userImage };
     const post = (action: "join" | "leave" | "heartbeat", keepalive = false) => fetch("/api/meetings/attendance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, action }), keepalive });
     void post("join").catch(() => {});
@@ -409,7 +519,7 @@ const LiveMeeting = ({ callId, initialPermissions }: { callId: string; initialPe
     const pageHide = () => void post("leave", true).catch(() => {});
     window.addEventListener("pagehide", pageHide);
     return () => { window.clearInterval(heartbeat); window.removeEventListener("pagehide", pageHide); void post("leave", true).catch(() => {}); };
-  }, [callId, userId, userImage, userName]);
+  }, [callId, rtc.status, userId, userImage, userName]);
 
   const sendClassroomEvent = useCallback(async (payload: Record<string, unknown>) => {
     const response = await fetch("/api/meetings/classroom-event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId, senderName: userName, senderImage: userImage, ...payload }) });

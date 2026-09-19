@@ -20,6 +20,8 @@ export type CohivaRtcRoomDocument = {
   individualPermissions: Record<string, Record<string, boolean>>;
   durationMinutes: number;
   maxParticipants: number;
+  startedAt: Date | null;
+  timerEndsAt: Date | null;
   endedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -106,6 +108,16 @@ const CohivaRtcRoomSchema = new Schema<CohivaRtcRoomDocument>(
       default: 20,
       min: 2,
       max: 20,
+    },
+    startedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    timerEndsAt: {
+      type: Date,
+      default: null,
+      index: true,
     },
     endedAt: {
       type: Date,

@@ -7,6 +7,7 @@ import {
 } from "node:crypto";
 
 import { broadcastRtcEvent } from "@/lib/rtc/server";
+import { meetingAuthorizationResponse, requireActiveMeetingParticipant } from "@/lib/meetings/authorization";
 
 /* =========================================================
    CONFIG
@@ -134,6 +135,8 @@ export async function POST(
       );
     }
 
+    await requireActiveMeetingParticipant(callId, userId);
+
     /* =====================================================
        BUILD EVENT
     ===================================================== */
@@ -245,6 +248,9 @@ export async function POST(
         custom,
     });
   } catch (error) {
+    const authorizationResponse = meetingAuthorizationResponse(error);
+    if (authorizationResponse) return authorizationResponse;
+
     console.error(
       "Cohiva classroom event error:",
       error

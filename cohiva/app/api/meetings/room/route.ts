@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth/server";
 import connectMongoDB from "@/lib/mongodb";
+import { finalizeMeetingInDatabase, hasMeetingExpired } from "@/lib/meetings/lifecycle";
 import CohivaRtcRoom from "@/models/CohivaRtcRoom";
 
 export async function GET(request: Request) {
@@ -11,8 +12,14 @@ export async function GET(request: Request) {
     if (!callId) return Response.json({ error: "Meeting ID is required." }, { status: 400 });
 
     await connectMongoDB();
-    const room = await CohivaRtcRoom.findOne({ callId }).lean();
+    const room = await CohivaRtcRoom.findOne({ callId });
     if (!room) return Response.json({ error: "Meeting not found." }, { status: 404 });
+
+    if (!room.endedAt && hasMeetingExpired(room)) {
+      const endedAt = room.timerEndsAt ? new Date(room.timerEndsAt) : new Date();
+      await finalizeMeetingInDatabase(callId, endedAt);
+      room.endedAt = endedAt;
+    }
 
     return Response.json({
       success: true,
@@ -24,6 +31,8 @@ export async function GET(request: Request) {
         title: room.title,
         description: room.description,
         startsAt: room.startsAt,
+        startedAt: room.startedAt,
+        timerEndsAt: room.timerEndsAt,
         accessMode: room.accessMode,
         durationMinutes: room.durationMinutes,
         maxParticipants: room.maxParticipants,

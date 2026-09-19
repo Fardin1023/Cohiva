@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth/server";
 import connectMongoDB from "@/lib/mongodb";
+import { meetingAuthorizationResponse, requireActiveMeetingParticipant } from "@/lib/meetings/authorization";
 import { broadcastRtcEvent } from "@/lib/rtc/server";
 import CohivaRtcRoom, {
   DEFAULT_COHIVA_RTC_PERMISSIONS,
@@ -175,22 +176,9 @@ export async function POST(request: Request) {
 
     await connectMongoDB();
 
-    const room = await CohivaRtcRoom.findOne({ callId })
-      .select({
-        hostUserId: 1,
-        permissions: 1,
-      })
-      .lean();
-
-    if (!room) {
-      return Response.json(
-        { error: "Meeting not found." },
-        { status: 404 }
-      );
-    }
-
+    const { room, isHost } = await requireActiveMeetingParticipant(callId, userId);
     const hostUserId = String(room.hostUserId ?? "");
-    const isTeacher = hostUserId === userId;
+    const isTeacher = isHost;
     const storedPermissions =
       room.permissions && typeof room.permissions === "object"
         ? (room.permissions as Record<string, unknown>)
@@ -378,6 +366,9 @@ export async function POST(request: Request) {
       studentWhiteboard: studentCanDraw,
     });
   } catch (error) {
+    const authorizationResponse = meetingAuthorizationResponse(error);
+    if (authorizationResponse) return authorizationResponse;
+
     console.error("Cohiva whiteboard event error:", error);
 
     return Response.json(

@@ -14,6 +14,7 @@ const MeetingJoinRequests = ({ callId }: Props) => {
   const [requests, setRequests] = useState<JoinRequest[]>([]);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [meetingEnded, setMeetingEnded] = useState(false);
   const previousIdsRef = useRef(new Set<string>());
 
   const loadRequests = useCallback(async () => {
@@ -21,12 +22,27 @@ const MeetingJoinRequests = ({ callId }: Props) => {
     try {
       const accessResponse = await fetch(`/api/meetings/access?callId=${encodeURIComponent(callId)}`, { cache: "no-store" });
       const accessResult = await accessResponse.json().catch(() => null);
-      if (accessResponse.ok) setAccessMode(accessResult?.mode === "open" || accessResult?.mode === "locked" ? accessResult.mode : "approval");
+      if (accessResponse.status === 410 || accessResult?.ended) {
+        setMeetingEnded(true);
+        setRequests([]);
+        setError("");
+        return;
+      }
+      if (!accessResponse.ok) {
+        throw new Error(accessResult?.error || "Unable to read meeting access settings.");
+      }
+      setAccessMode(accessResult?.mode === "open" || accessResult?.mode === "locked" ? accessResult.mode : "approval");
       if (accessResult?.mode !== "approval") { setRequests([]); return; }
 
       const response = await fetch(`/api/meetings/join-request?callId=${encodeURIComponent(callId)}&scope=pending`, { cache: "no-store" });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Unable to load waiting room.");
+      const result = await response.json().catch(() => null);
+      if (response.status === 410 || result?.ended) {
+        setMeetingEnded(true);
+        setRequests([]);
+        setError("");
+        return;
+      }
+      if (!response.ok) throw new Error(result?.error || "Unable to load waiting room.");
       const nextRequests = Array.isArray(result.requests) ? result.requests : [];
       const previousIds = previousIdsRef.current;
       const newRequest = nextRequests.find((item: JoinRequest) => !previousIds.has(item.userId));
@@ -41,7 +57,7 @@ const MeetingJoinRequests = ({ callId }: Props) => {
     }
   }, [callId, teacher]);
 
-  useSmartPolling(loadRequests, { enabled: Boolean(teacher), intervalMs: 1500 });
+  useSmartPolling(loadRequests, { enabled: Boolean(teacher) && !meetingEnded, intervalMs: 1500 });
 
   const decide = async (targetUserId: string, action: "approve" | "deny") => {
     try {
@@ -51,8 +67,14 @@ const MeetingJoinRequests = ({ callId }: Props) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ callId, targetUserId, action }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Unable to update join request.");
+      const result = await response.json().catch(() => null);
+      if (response.status === 410 || result?.ended) {
+        setMeetingEnded(true);
+        setRequests([]);
+        setError("");
+        return;
+      }
+      if (!response.ok) throw new Error(result?.error || "Unable to update join request.");
       setRequests((current) => current.filter((item) => item.userId !== targetUserId));
     } catch (decisionError) {
       setError(decisionError instanceof Error ? decisionError.message : "Unable to update join request.");

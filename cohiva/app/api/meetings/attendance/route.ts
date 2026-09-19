@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import connectMongoDB from "@/lib/mongodb";
 import MeetingAttendance from "@/models/MeetingAttendance";
 import CohivaRtcRoom from "@/models/CohivaRtcRoom";
+import { meetingAuthorizationResponse, requireActiveMeetingParticipant } from "@/lib/meetings/authorization";
 
 /* =========================================================
    CONFIG
@@ -950,6 +951,7 @@ export async function POST(
        DATABASE
     ===================================================== */
 
+    await requireActiveMeetingParticipant(callId, userId);
     await connectMongoDB();
 
     const now =
@@ -1259,6 +1261,9 @@ export async function POST(
   } catch (
     error
   ) {
+    const authorizationResponse = meetingAuthorizationResponse(error);
+    if (authorizationResponse) return authorizationResponse;
+
     console.error(
       "Cohiva attendance POST error:",
       error

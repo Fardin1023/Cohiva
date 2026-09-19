@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth/server";
 import connectMongoDB from "@/lib/mongodb";
 import { broadcastRtcEvent } from "@/lib/rtc/server";
+import { meetingAuthorizationResponse, requireActiveMeetingParticipant } from "@/lib/meetings/authorization";
 import CohivaRtcRoom, {
   DEFAULT_COHIVA_RTC_PERMISSIONS,
 } from "@/models/CohivaRtcRoom";
@@ -60,6 +61,8 @@ export async function GET(request: Request) {
 
     await connectMongoDB();
 
+    await requireActiveMeetingParticipant(callId, userId);
+
     const room = await CohivaRtcRoom.findOne({ callId })
       .select({
         hostUserId: 1,
@@ -86,6 +89,9 @@ export async function GET(request: Request) {
           : {},
     });
   } catch (error) {
+    const authorizationResponse = meetingAuthorizationResponse(error);
+    if (authorizationResponse) return authorizationResponse;
+
     console.error("Read Cohiva permissions error:", error);
 
     return Response.json(
@@ -117,6 +123,8 @@ export async function PUT(request: Request) {
     }
 
     await connectMongoDB();
+
+    await requireActiveMeetingParticipant(callId, userId);
 
     const room = await CohivaRtcRoom.findOne({ callId });
 
@@ -169,6 +177,9 @@ export async function PUT(request: Request) {
       permissions: next,
     });
   } catch (error) {
+    const authorizationResponse = meetingAuthorizationResponse(error);
+    if (authorizationResponse) return authorizationResponse;
+
     console.error("Update Cohiva permissions error:", error);
 
     return Response.json(

@@ -7,6 +7,7 @@ import {
 } from "node:crypto";
 
 import connectMongoDB from "@/lib/mongodb";
+import { meetingAuthorizationResponse, requireActiveMeetingParticipant } from "@/lib/meetings/authorization";
 
 import MeetingChatMessage from "@/models/MeetingChatMessage";
 import { broadcastRtcEvent } from "@/lib/rtc/server";
@@ -150,6 +151,7 @@ export async function GET(
       );
     }
 
+    await requireActiveMeetingParticipant(callId, userId);
     await connectMongoDB();
 
     /*
@@ -192,6 +194,9 @@ export async function GET(
       messages,
     });
   } catch (error) {
+    const authorizationResponse = meetingAuthorizationResponse(error);
+    if (authorizationResponse) return authorizationResponse;
+
     console.error(
       "Cohiva chat GET error:",
       error
@@ -301,6 +306,7 @@ export async function POST(
       );
     }
 
+    await requireActiveMeetingParticipant(callId, userId);
     await connectMongoDB();
 
     /* =====================================================
@@ -439,6 +445,9 @@ export async function POST(
       message,
     });
   } catch (error) {
+    const authorizationResponse = meetingAuthorizationResponse(error);
+    if (authorizationResponse) return authorizationResponse;
+
     console.error(
       "Cohiva chat POST error:",
       error

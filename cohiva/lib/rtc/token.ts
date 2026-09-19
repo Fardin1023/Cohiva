@@ -12,6 +12,8 @@ export type RtcTokenPayload = {
   exp: number;
   maxParticipants: number;
   durationMinutes: number;
+  startedAt?: string | null;
+  timerEndsAt?: string | null;
   custom: Record<string, unknown>;
 };
 
