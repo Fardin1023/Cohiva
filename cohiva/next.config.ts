@@ -25,7 +25,12 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // Vercel uses its own Next.js build adapter. Next.js 16.3.x can fail when
+  // adapter builds are combined with standalone output because the adapter may
+  // omit next-server.js.nft.json while the standalone finalizer still expects it.
+  // Keep standalone output for self-hosted/Docker builds, but let Vercel use
+  // its native output mode.
+  ...(process.env.VERCEL ? {} : { output: "standalone" as const }),
   ...(developmentOrigins.length > 0
     ? { allowedDevOrigins: developmentOrigins }
     : {}),
