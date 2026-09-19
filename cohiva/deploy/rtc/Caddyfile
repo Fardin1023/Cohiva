@@ -1,0 +1,4 @@
+{$COHIVA_RTC_DOMAIN} {
+  encode zstd gzip
+  reverse_proxy rtc:4100
+}

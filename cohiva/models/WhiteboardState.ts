@@ -12,7 +12,7 @@ const WhiteboardStateSchema =
   new Schema(
     {
       /*
-       * Stream meeting ID.
+       * Cohiva meeting ID.
        */
       callId: {
         type: String,
@@ -22,7 +22,7 @@ const WhiteboardStateSchema =
       },
 
       /*
-       * Clerk user who originally
+       * Cohiva user who originally
        * created/saved the board.
        */
       ownerId: {

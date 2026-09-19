@@ -1,0 +1,88 @@
+services:
+  rtc:
+    build:
+      context: .
+      dockerfile: Dockerfile.rtc
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: ${MONGODB_URI}
+      COHIVA_RTC_SECRET: ${COHIVA_RTC_SECRET}
+      COHIVA_RTC_PORT: 4100
+      COHIVA_RTC_MEDIA_PORT: 4101
+      COHIVA_RTC_LISTEN_IP: 0.0.0.0
+      COHIVA_RTC_ANNOUNCED_ADDRESS: ${COHIVA_PUBLIC_IP}
+      COHIVA_RTC_ALLOWED_ORIGINS: ${COHIVA_RTC_ALLOWED_ORIGINS}
+      COHIVA_TURN_URLS: ${COHIVA_TURN_URLS}
+      COHIVA_TURN_SECRET: ${COHIVA_TURN_SECRET}
+      COHIVA_TURN_CREDENTIAL_TTL_SECONDS: ${COHIVA_TURN_CREDENTIAL_TTL_SECONDS:-3600}
+      COHIVA_RTC_ICE_TRANSPORT_POLICY: ${COHIVA_RTC_ICE_TRANSPORT_POLICY:-all}
+    ports:
+      - "4101:4101/tcp"
+      - "4101:4101/udp"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - cohiva-rtc
+
+  turn:
+    image: coturn/coturn:4.18.0-r0-debian
+    restart: unless-stopped
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --fingerprint
+      - --use-auth-secret
+      - --static-auth-secret=${COHIVA_TURN_SECRET}
+      - --realm=${COHIVA_RTC_DOMAIN}
+      - --external-ip=${COHIVA_PUBLIC_IP}
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "49160-49200:49160-49200/tcp"
+      - "49160-49200:49160-49200/udp"
+    networks:
+      - cohiva-rtc
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    environment:
+      COHIVA_RTC_DOMAIN: ${COHIVA_RTC_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/rtc/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_rtc_data:/data
+      - caddy_rtc_config:/config
+    depends_on:
+      rtc:
+        condition: service_healthy
+    networks:
+      - cohiva-rtc
+
+networks:
+  cohiva-rtc:
+    driver: bridge
+
+volumes:
+  caddy_rtc_data:
+  caddy_rtc_config:

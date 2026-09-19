@@ -30,7 +30,7 @@ const MeetingAccessibilityPanel = ({ open, onClose, settings, onChange }: Props)
       <button type="button" onClick={onClose} className="absolute inset-0" aria-label="Close accessibility" />
       <aside className="relative z-10 h-full w-full max-w-[430px] overflow-y-auto bg-[#FFF7EB] p-5 text-[#3D3732] shadow-2xl">
         <div className="flex items-start justify-between"><div><p className="text-[9px] font-black uppercase tracking-[0.18em] text-[#A2AB73]">Accessibility</p><h2 className="mt-1 text-xl font-black">Meeting display</h2></div><button type="button" onClick={onClose} className="h-9 w-9 rounded-full bg-[#403A35]/10 font-black">×</button></div>
-        <div className="mt-5 rounded-2xl bg-[#F9F0E0] p-4"><p className="text-xs font-black">Live captions</p><p className="mt-1 text-[10px] leading-4 text-[#756E64]">Captions are temporarily unavailable while Cohiva moves to its self-hosted RTC stack. The rest of the accessibility controls work normally.</p></div>
+        <div className="mt-5 rounded-2xl bg-[#F9F0E0] p-4"><p className="text-xs font-black">Live captions</p><p className="mt-1 text-[10px] leading-4 text-[#756E64]">Live captions are not enabled in this version of Cohiva. The rest of the accessibility controls work normally.</p></div>
         <div className="mt-4 space-y-3">{switchRow("highContrast", "High contrast", "Increase visual separation inside the meeting interface.", "◐")}{switchRow("reduceMotion", "Reduce motion", "Reduce decorative meeting animations.", "↔")}{switchRow("hideReactions", "Hide reactions", "Do not show floating emoji reactions on your screen.", "😀")}</div>
       </aside>
     </div>

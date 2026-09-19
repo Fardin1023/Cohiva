@@ -1,36 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Cohiva
 
-## Getting Started
+Cohiva is a classroom/meeting application built with Next.js, MongoDB, mediasoup, WebSockets, Excalidraw, custom authentication, host-only recording, attendance, waiting-room controls, and realtime collaboration.
 
-First, run the development server:
+## Local development
+
+1. Copy `.env.example` to `.env.local` and fill the required values.
+2. Install dependencies:
+
+```bash
+npm install
+```
+
+3. Start the RTC server:
+
+```bash
+npm run rtc
+```
+
+4. In a second terminal, start Next.js:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Recommended production architecture
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Cohiva's web application is prepared for **Vercel**. The media server remains a separate long-running service because mediasoup/Coturn need dedicated networking and UDP/TCP media ports.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **Vercel:** Next.js web app, auth/API routes, private recording access
+- **Vercel Private Blob:** meeting recording files
+- **MongoDB Atlas:** persistent application data
+- **External Linux VPS:** Cohiva RTC/mediasoup + Coturn + Caddy TLS
 
-## Learn More
+See [`VERCEL_DEPLOYMENT.md`](./VERCEL_DEPLOYMENT.md), `.env.production.example`, and `.env.rtc.example` before deploying.
 
-To learn more about Next.js, take a look at the following resources:
+Useful checks:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm run preflight:vercel
+npm run typecheck
+npm run lint
+npm run build
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+For the external RTC host:
 
-## Deploy on Vercel
+```bash
+npm run preflight:rtc
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The older all-in-one Docker/VPS deployment is retained in [`DEPLOYMENT.md`](./DEPLOYMENT.md) for reference, but it is not the recommended path when the web app is deployed on Vercel.

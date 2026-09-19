@@ -115,7 +115,7 @@ const MeetingAttendanceSchema =
 /* =========================================================
    UNIQUE PARTICIPANT PER MEETING
 
-   Same Clerk user cannot have two documents
+   The same Cohiva user cannot have two documents
    for the same meeting.
 ========================================================= */
 

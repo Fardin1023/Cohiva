@@ -316,20 +316,13 @@ const PersonalRoom = () => {
           },
           1800
         );
-      } catch (err) {
-        /*
-         * Ignore user cancelling
-         * the native share dialog.
-         */
-        console.log(
-          "Share room:",
-          err
-        );
+      } catch {
+        /* Ignore cancellation/clipboard denial without noisy production logs. */
       }
     };
 
   /* =====================================================
-     CLERK LOADING
+     AUTH LOADING
   ===================================================== */
 
   if (!isLoaded) {
@@ -339,7 +332,7 @@ const PersonalRoom = () => {
   }
 
   /* =====================================================
-     STREAM / ROOM LOADING
+     RTC / ROOM LOADING
   ===================================================== */
 
   if (

@@ -42,3 +42,9 @@ next-env.d.ts
 
 # local Cohiva recording media
 /storage/recordings/
+
+# Keep safe templates in source control while ignoring real secrets.
+!.env.example
+!.env.production.example
+
+!.env.rtc.example

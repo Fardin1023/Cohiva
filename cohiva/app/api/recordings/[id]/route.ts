@@ -2,6 +2,9 @@ import { createReadStream } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 
+import { del, issueSignedToken, presignUrl } from "@vercel/blob";
+import { NextResponse } from "next/server";
+
 import { auth } from "@/lib/auth/server";
 import connectMongoDB from "@/lib/mongodb";
 import { getRecordingPath } from "@/lib/recordings/storage";
@@ -22,17 +25,23 @@ const getOwnedRecording = async (recordingId: string, userId: string) => {
   return MeetingRecording.findOne({ recordingId, hostUserId: userId }).lean();
 };
 
-export async function GET(
+const createBlobReadUrl = async (pathname: string) => {
+  const validUntil = Date.now() + 6 * 60 * 60_000;
+  const token = await issueSignedToken({
+    operations: ["get"],
+  });
+  const { presignedUrl } = await presignUrl(token, {
+    pathname,
+    operation: "get",
+    validUntil,
+  });
+  return { presignedUrl, validUntil };
+};
+
+const serveFilesystemRecording = async (
   request: Request,
-  context: { params: Promise<{ id: string }> }
-) {
-  const { userId } = await auth();
-  if (!userId) return new Response("Unauthorized", { status: 401 });
-
-  const { id } = await context.params;
-  const recording = await getOwnedRecording(id, userId);
-  if (!recording) return new Response("Not found", { status: 404 });
-
+  recording: any
+) => {
   const filePath = getRecordingPath(recording.recordingId, recording.extension || "webm");
 
   let fileStats;
@@ -104,6 +113,44 @@ export async function GET(
       "Content-Range": `bytes ${start}-${end}/${total}`,
     },
   });
+};
+
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { userId } = await auth();
+  if (!userId) return new Response("Unauthorized", { status: 401 });
+
+  const { id } = await context.params;
+  const recording = await getOwnedRecording(id, userId);
+  if (!recording) return new Response("Not found", { status: 404 });
+
+  if (recording.storageProvider === "vercel-blob" && recording.blobPathname) {
+    try {
+      const { presignedUrl, validUntil } = await createBlobReadUrl(recording.blobPathname);
+      const wantsJson = new URL(request.url).searchParams.get("format") === "json";
+
+      if (wantsJson) {
+        return NextResponse.json(
+          {
+            success: true,
+            url: presignedUrl,
+            expiresAt: new Date(validUntil).toISOString(),
+            fileName: `${safeFileName(recording.title)}.${recording.extension || "webm"}`,
+          },
+          { headers: { "Cache-Control": "private, no-store" } }
+        );
+      }
+
+      return NextResponse.redirect(presignedUrl, 307);
+    } catch (error) {
+      console.error("Create Cohiva recording access URL error:", error);
+      return new Response("Recording is temporarily unavailable", { status: 503 });
+    }
+  }
+
+  return serveFilesystemRecording(request, recording);
 }
 
 export async function DELETE(
@@ -121,9 +168,21 @@ export async function DELETE(
     return Response.json({ error: "Recording not found." }, { status: 404 });
   }
 
-  const filePath = getRecordingPath(recording.recordingId, recording.extension || "webm");
-  await rm(filePath, { force: true }).catch(() => {});
-  await MeetingRecording.deleteOne({ _id: recording._id, hostUserId: userId });
+  try {
+    if (recording.storageProvider === "vercel-blob" && recording.blobPathname) {
+      await del(recording.blobPathname);
+    } else {
+      const filePath = getRecordingPath(recording.recordingId, recording.extension || "webm");
+      await rm(filePath, { force: true }).catch(() => {});
+    }
 
-  return Response.json({ success: true });
+    await MeetingRecording.deleteOne({ _id: recording._id, hostUserId: userId });
+    return Response.json({ success: true });
+  } catch (error) {
+    console.error("Delete Cohiva recording error:", error);
+    return Response.json(
+      { error: "Unable to delete the recording right now." },
+      { status: 500 }
+    );
+  }
 }

@@ -11,9 +11,13 @@ import {
   useState,
 } from "react";
 
+import { upload } from "@vercel/blob/client";
 import { Device } from "mediasoup-client";
 
 import { CohivaBrowserMeetingRecorder } from "@/lib/recordings/browserMeetingRecorder";
+
+const USE_VERCEL_BLOB_RECORDINGS =
+  process.env.NEXT_PUBLIC_COHIVA_RECORDING_STORAGE === "vercel-blob";
 
 export type CohivaRtcStatus =
   | "idle"
@@ -1197,21 +1201,54 @@ export const CohivaRtcProvider = ({
             throw new Error("The recording did not contain any media.");
           }
 
-          const response = await fetch(
-            `/api/recordings/upload?callId=${encodeURIComponent(callId)}`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": blob.type || "video/webm",
-                "X-Cohiva-Duration-Ms": String(durationMs),
-              },
-              body: blob,
-            }
-          );
+          if (USE_VERCEL_BLOB_RECORDINGS) {
+            const recordingId = crypto.randomUUID();
+            const pathname = `recordings/${callId}/${recordingId}.webm`;
 
-          const result = await response.json().catch(() => null);
-          if (!response.ok) {
-            throw new Error(result?.error || "Cohiva could not save the recording.");
+            setTransientNotice("Uploading recording securely...");
+
+            const uploaded = await upload(pathname, blob, {
+              access: "private",
+              handleUploadUrl: "/api/recordings/upload",
+              clientPayload: JSON.stringify({ callId, durationMs }),
+              contentType: "video/webm",
+              multipart: true,
+            });
+
+            const finalizeResponse = await fetch("/api/recordings/finalize", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                callId,
+                durationMs,
+                pathname: uploaded.pathname,
+                url: uploaded.url,
+                etag: uploaded.etag,
+              }),
+            });
+            const finalizeResult = await finalizeResponse.json().catch(() => null);
+            if (!finalizeResponse.ok) {
+              throw new Error(
+                finalizeResult?.error || "Cohiva could not finalize the recording."
+              );
+            }
+          } else {
+            const response = await fetch(
+              `/api/recordings/upload?callId=${encodeURIComponent(callId)}`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "video/webm",
+                  "X-Cohiva-Duration-Ms": String(durationMs),
+                },
+                body: blob,
+              }
+            );
+
+            const result = await response.json().catch(() => null);
+            if (!response.ok) {
+              throw new Error(result?.error || "Cohiva could not save the recording.");
+            }
           }
 
           setTransientNotice("Recording saved to your Cohiva recordings.");
@@ -1481,9 +1518,16 @@ export const CohivaRtcProvider = ({
         }
 
         const endpoint = new URL(payload.wsUrl);
-        endpoint.searchParams.set("token", payload.token);
 
-        const socket = new WebSocket(endpoint.toString());
+        /*
+         * Keep the short-lived RTC token out of the WebSocket URL so reverse
+         * proxies/access logs do not accidentally persist it. Authentication
+         * is carried in a dedicated WebSocket subprotocol value instead.
+         */
+        const socket = new WebSocket(endpoint.toString(), [
+          "cohiva-rtc",
+          `cohiva-token.${payload.token}`,
+        ]);
         socketRef.current = socket;
 
         socket.addEventListener(

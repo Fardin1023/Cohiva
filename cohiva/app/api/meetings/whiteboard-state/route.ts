@@ -242,7 +242,7 @@ export async function PUT(
      * browser request from being written
      * straight into MongoDB.
      *
-     * This is NOT the Stream 5 KB limit.
+     * This limit protects Cohiva from oversized persisted board snapshots.
      */
     const serialized =
       JSON.stringify(

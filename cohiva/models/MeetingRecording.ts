@@ -9,6 +9,10 @@ export type MeetingRecordingDocument = {
   extension: string;
   sizeBytes: number;
   durationMs: number;
+  storageProvider: "filesystem" | "vercel-blob";
+  blobPathname?: string;
+  blobUrl?: string;
+  blobEtag?: string;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -64,6 +68,30 @@ const MeetingRecordingSchema = new Schema<MeetingRecordingDocument>(
       type: Number,
       default: 0,
       min: 0,
+    },
+    storageProvider: {
+      type: String,
+      enum: ["filesystem", "vercel-blob"],
+      default: "filesystem",
+      index: true,
+    },
+    blobPathname: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 1000,
+    },
+    blobUrl: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 2000,
+    },
+    blobEtag: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 500,
     },
   },
   {

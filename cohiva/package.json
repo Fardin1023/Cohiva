@@ -7,11 +7,19 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "rtc": "node --env-file=.env.local --import tsx rtc-server/server.ts"
+    "rtc": "node --env-file=.env.local --import tsx rtc-server/server.ts",
+    "typecheck": "tsc --noEmit",
+    "preflight:prod": "node scripts/production-preflight.mjs",
+    "deploy:check": "npm run preflight:prod && npm run typecheck && npm run lint && npm run build",
+    "smoke:prod": "node scripts/production-smoke.mjs",
+    "preflight:vercel": "node scripts/vercel-preflight.mjs",
+    "deploy:check:vercel": "npm run preflight:vercel && npm run typecheck && npm run lint && npm run build",
+    "preflight:rtc": "node scripts/rtc-preflight.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
     "@excalidraw/excalidraw": "^0.18.1",
+    "@vercel/blob": "^2.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.35.0",
@@ -38,5 +46,8 @@
     "tailwindcss": "^4",
     "tsx": "^4.23.13",
     "typescript": "^5"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }

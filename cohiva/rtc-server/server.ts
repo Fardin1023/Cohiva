@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import http from "node:http";
 import { URL } from "node:url";
 
@@ -45,9 +46,64 @@ const LISTEN_IP = process.env.COHIVA_RTC_LISTEN_IP?.trim() || "0.0.0.0";
 const ANNOUNCED_ADDRESS =
   process.env.COHIVA_RTC_ANNOUNCED_ADDRESS?.trim() || "127.0.0.1";
 const SECRET = process.env.COHIVA_RTC_SECRET?.trim() || "";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const ALLOWED_ORIGINS = (process.env.COHIVA_RTC_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const TURN_URLS = (process.env.COHIVA_TURN_URLS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const TURN_SECRET = process.env.COHIVA_TURN_SECRET || "";
+const TURN_CREDENTIAL_TTL_SECONDS = Math.max(
+  300,
+  Math.min(86_400, Number(process.env.COHIVA_TURN_CREDENTIAL_TTL_SECONDS || 3600) || 3600)
+);
+const ICE_TRANSPORT_POLICY =
+  process.env.COHIVA_RTC_ICE_TRANSPORT_POLICY === "relay" ? "relay" : "all";
+
+const createTurnIceServers = (userId: string) => {
+  if (!TURN_URLS.length || !TURN_SECRET) return [];
+
+  const expiresAt = Math.floor(Date.now() / 1000) + TURN_CREDENTIAL_TTL_SECONDS;
+  const safeUserId = userId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 96) || "user";
+  const username = `${expiresAt}:${safeUserId}`;
+  const credential = createHmac("sha1", TURN_SECRET)
+    .update(username)
+    .digest("base64");
+
+  return [
+    {
+      urls: TURN_URLS,
+      username,
+      credential,
+    },
+  ];
+};
 
 if (!SECRET) {
   console.error("COHIVA_RTC_SECRET is required.");
+  process.exit(1);
+}
+
+if (IS_PRODUCTION && SECRET.length < 32) {
+  console.error("COHIVA_RTC_SECRET must be at least 32 characters in production.");
+  process.exit(1);
+}
+
+if (IS_PRODUCTION && ALLOWED_ORIGINS.length === 0) {
+  console.error("COHIVA_RTC_ALLOWED_ORIGINS is required in production.");
+  process.exit(1);
+}
+
+if (IS_PRODUCTION && /^(127\.|0\.0\.0\.0$|localhost$)/i.test(ANNOUNCED_ADDRESS)) {
+  console.error("COHIVA_RTC_ANNOUNCED_ADDRESS must be the public RTC address in production.");
+  process.exit(1);
+}
+
+if (TURN_URLS.length && TURN_SECRET.length < 32) {
+  console.error("COHIVA_TURN_SECRET must be at least 32 characters when TURN is enabled.");
   process.exit(1);
 }
 
@@ -445,6 +501,8 @@ const createTransport = async (room: Room, peer: Peer) => {
     iceCandidates: transport.iceCandidates,
     dtlsParameters: transport.dtlsParameters,
     sctpParameters: transport.sctpParameters,
+    iceServers: createTurnIceServers(peer.token.userId),
+    iceTransportPolicy: ICE_TRANSPORT_POLICY,
   };
 };
 
@@ -1034,7 +1092,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
   if (url.pathname === "/health") {
-    return json(res, 200, { ok: true, rooms: rooms.size });
+    return json(res, 200, { ok: true });
   }
 
   if (url.pathname.startsWith("/internal/") && !authorizedInternal(req)) {
@@ -1104,7 +1162,11 @@ const server = http.createServer(async (req, res) => {
   return json(res, 404, { error: "Not found." });
 });
 
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({
+  noServer: true,
+  handleProtocols: (protocols) =>
+    protocols.has("cohiva-rtc") ? "cohiva-rtc" : false,
+});
 
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
@@ -1114,7 +1176,33 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
 
-  const tokenValue = url.searchParams.get("token") || "";
+  if (ALLOWED_ORIGINS.length > 0) {
+    const origin = req.headers.origin?.trim() || "";
+    if (!origin || !ALLOWED_ORIGINS.includes(origin)) {
+      socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+  }
+
+  const protocols = String(req.headers["sec-websocket-protocol"] || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const tokenProtocol = protocols.find((value) =>
+    value.startsWith("cohiva-token.")
+  );
+  const tokenValue = tokenProtocol
+    ? tokenProtocol.slice("cohiva-token.".length)
+    : IS_PRODUCTION
+      ? ""
+      : url.searchParams.get("token") || "";
+
+  if (!protocols.includes("cohiva-rtc") || !tokenValue) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
 
   try {
     const token = verifyRtcToken(tokenValue, SECRET);
@@ -1156,6 +1244,8 @@ const start = async () => {
     console.log(`Cohiva RTC signaling: http://127.0.0.1:${SIGNAL_PORT}`);
     console.log(`Cohiva RTC media port: ${MEDIA_PORT} UDP/TCP`);
     console.log(`RTC announced address: ${ANNOUNCED_ADDRESS}`);
+    console.log(`RTC TURN fallback: ${TURN_URLS.length ? "configured" : "disabled"}`);
+    console.log(`RTC allowed origins: ${ALLOWED_ORIGINS.length || "development/unrestricted"}`);
   });
 };
 

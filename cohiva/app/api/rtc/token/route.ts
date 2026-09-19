@@ -18,9 +18,15 @@ const normalizeWsUrl = (raw: string) => {
   try {
     const url = new URL(value);
     if (!url.pathname || url.pathname === "/") url.pathname = "/rtc";
+    if (process.env.NODE_ENV === "production" && url.protocol !== "wss:") {
+      return null;
+    }
+    if (url.protocol !== "ws:" && url.protocol !== "wss:") return null;
     return url.toString();
   } catch {
-    return "ws://127.0.0.1:4100/rtc";
+    return process.env.NODE_ENV === "production"
+      ? null
+      : "ws://127.0.0.1:4100/rtc";
   }
 };
 
@@ -177,11 +183,23 @@ export async function POST(request: Request) {
     secret
   );
 
+  const wsUrl = normalizeWsUrl(
+    process.env.COHIVA_RTC_PUBLIC_URL ||
+      process.env.NEXT_PUBLIC_COHIVA_RTC_URL ||
+      "ws://127.0.0.1:4100/rtc"
+  );
+
+  if (!wsUrl) {
+    console.error("Cohiva RTC public URL is missing or insecure for production.");
+    return NextResponse.json(
+      { error: "Cohiva RTC is not configured correctly." },
+      { status: 500 }
+    );
+  }
+
   return NextResponse.json({
     token,
-    wsUrl: normalizeWsUrl(
-      process.env.NEXT_PUBLIC_COHIVA_RTC_URL || "ws://127.0.0.1:4100/rtc"
-    ),
+    wsUrl,
     callId,
     userId: user.id,
     name,

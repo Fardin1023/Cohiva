@@ -3,17 +3,11 @@ import "server-only";
 import nodemailer from "nodemailer";
 
 const getSmtpConfig = () => {
-  const host =
-    process.env.SMTP_HOST?.trim() || "";
-  const port = Number(
-    process.env.SMTP_PORT || ""
-  );
-  const user =
-    process.env.SMTP_USER?.trim() || "";
-  const pass =
-    process.env.SMTP_PASS || "";
-  const from =
-    process.env.SMTP_FROM?.trim() || "";
+  const host = process.env.SMTP_HOST?.trim() || "";
+  const port = Number(process.env.SMTP_PORT || "");
+  const user = process.env.SMTP_USER?.trim() || "";
+  const pass = process.env.SMTP_PASS || "";
+  const from = process.env.SMTP_FROM?.trim() || "";
 
   if (
     !host ||
@@ -28,17 +22,21 @@ const getSmtpConfig = () => {
   return {
     host,
     port,
-    secure:
-      process.env.SMTP_SECURE === "true" ||
-      port === 465,
+    secure: process.env.SMTP_SECURE === "true" || port === 465,
     user,
     pass,
     from,
   };
 };
 
-export const passwordResetEmailConfigured = () =>
-  Boolean(getSmtpConfig());
+const escapeHtml = (value: string) =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+
+export const passwordResetEmailConfigured = () => Boolean(getSmtpConfig());
 
 export const sendPasswordResetEmail = async ({
   to,
@@ -49,24 +47,26 @@ export const sendPasswordResetEmail = async ({
 }) => {
   const config = getSmtpConfig();
 
-  if (!config) {
-    return false;
-  }
+  if (!config) return false;
 
-  const transporter =
-    nodemailer.createTransport({
-      host: config.host,
-      port: config.port,
-      secure: config.secure,
-      ...(config.user
-        ? {
-            auth: {
-              user: config.user,
-              pass: config.pass,
-            },
-          }
-        : {}),
-    });
+  const transporter = nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
+    ...(config.user
+      ? {
+          auth: {
+            user: config.user,
+            pass: config.pass,
+          },
+        }
+      : {}),
+  });
+
+  const safeResetUrl = escapeHtml(resetUrl);
 
   await transporter.sendMail({
     from: config.from,
@@ -85,7 +85,7 @@ export const sendPasswordResetEmail = async ({
         <h2>Reset your Cohiva password</h2>
         <p>A password reset was requested for your Cohiva account.</p>
         <p>
-          <a href="${resetUrl}" style="display:inline-block;padding:12px 18px;border-radius:10px;background:#CC3A63;color:white;text-decoration:none;font-weight:700">
+          <a href="${safeResetUrl}" style="display:inline-block;padding:12px 18px;border-radius:10px;background:#CC3A63;color:white;text-decoration:none;font-weight:700">
             Set a new password
           </a>
         </p>

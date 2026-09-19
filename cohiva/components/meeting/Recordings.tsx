@@ -36,6 +36,7 @@ const Recordings = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -61,6 +62,60 @@ const Recordings = () => {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const downloadRecording = async (recording: RecordingItem) => {
+    try {
+      setDownloadingId(recording.id);
+      setError("");
+
+      const accessResponse = await fetch(
+        `/api/recordings/${encodeURIComponent(recording.id)}?format=json`,
+        { cache: "no-store" }
+      );
+
+      if (accessResponse.headers.get("content-type")?.includes("application/json")) {
+        const access = await accessResponse.json();
+        if (!accessResponse.ok) {
+          throw new Error(access?.error || "Unable to prepare the download.");
+        }
+
+        if (access?.url) {
+          const directResponse = await fetch(access.url);
+          if (!directResponse.ok) throw new Error("Unable to download the recording.");
+          const fileBlob = await directResponse.blob();
+          const objectUrl = URL.createObjectURL(fileBlob);
+          const link = document.createElement("a");
+          link.href = objectUrl;
+          link.download = access.fileName || `${recording.title || "cohiva-recording"}.webm`;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+      }
+
+      if (!accessResponse.ok) throw new Error("Unable to download the recording.");
+
+      const fileBlob = await accessResponse.blob();
+      const objectUrl = URL.createObjectURL(fileBlob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `${recording.title || "cohiva-recording"}.webm`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (downloadError) {
+      setError(
+        downloadError instanceof Error
+          ? downloadError.message
+          : "Unable to download the recording."
+      );
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   const removeRecording = async (recording: RecordingItem) => {
     if (!window.confirm(`Delete the recording of “${recording.title}”?`)) return;
@@ -147,8 +202,6 @@ const Recordings = () => {
         {recordings.map((recording) => {
           const createdAt = new Date(recording.createdAt);
           const videoUrl = `/api/recordings/${encodeURIComponent(recording.id)}`;
-          const downloadUrl = `${videoUrl}?download=1`;
-
           return (
             <article
               key={recording.id}
@@ -199,12 +252,15 @@ const Recordings = () => {
                 </p>
 
                 <div className="mt-6 grid grid-cols-2 gap-3">
-                  <a
-                    href={downloadUrl}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#403A35] px-4 py-3.5 text-sm font-bold text-white"
+                  <button
+                    type="button"
+                    disabled={downloadingId === recording.id}
+                    onClick={() => void downloadRecording(recording)}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#403A35] px-4 py-3.5 text-sm font-bold text-white disabled:opacity-50"
                   >
-                    <Download size={16} /> Download
-                  </a>
+                    <Download size={16} />
+                    {downloadingId === recording.id ? "Downloading..." : "Download"}
+                  </button>
                   <button
                     type="button"
                     disabled={deletingId === recording.id}

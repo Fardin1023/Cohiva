@@ -5,9 +5,21 @@ import { mkdir } from "node:fs/promises";
 
 export const getRecordingsDirectory = () => {
   const configured = process.env.COHIVA_RECORDINGS_DIR?.trim();
-  return configured
-    ? path.resolve(configured)
-    : path.join(process.cwd(), "storage", "recordings");
+
+  if (configured) {
+    return path.resolve(configured);
+  }
+
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.COHIVA_ALLOW_EPHEMERAL_RECORDINGS !== "true"
+  ) {
+    throw new Error(
+      "COHIVA_RECORDINGS_DIR is required in production so recordings use persistent storage."
+    );
+  }
+
+  return path.join(process.cwd(), "storage", "recordings");
 };
 
 export const ensureRecordingsDirectory = async () => {

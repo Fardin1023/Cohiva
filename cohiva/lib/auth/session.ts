@@ -8,7 +8,9 @@ import connectMongoDB from "@/lib/mongodb";
 import AuthSession from "@/models/AuthSession";
 
 export const SESSION_COOKIE_NAME =
-  "cohiva_session";
+  process.env.NODE_ENV === "production"
+    ? "__Host-cohiva_session"
+    : "cohiva_session";
 
 export const SESSION_MAX_AGE_SECONDS =
   60 * 60 * 24 * 30;
@@ -29,6 +31,7 @@ const sessionCookieOptions = {
   path: "/",
   maxAge:
     SESSION_MAX_AGE_SECONDS,
+  priority: "high" as const,
 };
 
 export const createAuthSession = async (
