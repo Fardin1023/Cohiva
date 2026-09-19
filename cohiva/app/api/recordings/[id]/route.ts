@@ -33,6 +33,7 @@ const createBlobReadUrl = async (pathname: string) => {
   const { presignedUrl } = await presignUrl(token, {
     pathname,
     operation: "get",
+    access: "private",
     validUntil,
   });
   return { presignedUrl, validUntil };

@@ -33,6 +33,6 @@ export const getRecordingPath = (
   extension = "webm"
 ) =>
   path.join(
-    getRecordingsDirectory(),
+    /* turbopackIgnore: true */ getRecordingsDirectory(),
     `${recordingId}.${extension.replace(/[^a-z0-9]/gi, "").toLowerCase() || "webm"}`
   );
